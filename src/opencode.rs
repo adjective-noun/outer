@@ -105,8 +105,6 @@ fn parse_sse_stream(
     response: reqwest::Response,
 ) -> impl Stream<Item = Result<StreamEvent>> + Send {
     use futures::StreamExt;
-    use tokio_stream::wrappers::LinesStream;
-    use tokio::io::AsyncBufReadExt;
 
     async_stream::stream! {
         let mut bytes_stream = response.bytes_stream();
@@ -153,7 +151,7 @@ fn parse_sse_stream(
     }
 }
 
-fn parse_event(event_type: &str, data: &str) -> Result<StreamEvent> {
+pub(crate) fn parse_event(event_type: &str, data: &str) -> Result<StreamEvent> {
     match event_type {
         "content" | "" => {
             let content: ContentEvent = serde_json::from_str(data)
@@ -213,4 +211,228 @@ pub struct ContentEvent {
 pub struct ErrorEvent {
     pub message: String,
     pub code: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_opencode_client_new() {
+        let client = OpenCodeClient::new("http://localhost:8080");
+        assert_eq!(client.base_url, "http://localhost:8080");
+    }
+
+    #[test]
+    fn test_opencode_client_new_with_string() {
+        let url = String::from("http://example.com:3000");
+        let client = OpenCodeClient::new(url);
+        assert_eq!(client.base_url, "http://example.com:3000");
+    }
+
+    #[test]
+    fn test_parse_event_content() {
+        let data = r#"{"text": "Hello, world!"}"#;
+        let event = parse_event("content", data).unwrap();
+        match event {
+            StreamEvent::Content(content) => {
+                assert_eq!(content.text, "Hello, world!");
+            }
+            _ => panic!("Expected Content event"),
+        }
+    }
+
+    #[test]
+    fn test_parse_event_content_empty_type() {
+        let data = r#"{"text": "test"}"#;
+        let event = parse_event("", data).unwrap();
+        match event {
+            StreamEvent::Content(content) => {
+                assert_eq!(content.text, "test");
+            }
+            _ => panic!("Expected Content event"),
+        }
+    }
+
+    #[test]
+    fn test_parse_event_done() {
+        let event = parse_event("done", "").unwrap();
+        assert!(matches!(event, StreamEvent::Done));
+    }
+
+    #[test]
+    fn test_parse_event_error() {
+        let data = r#"{"message": "Something went wrong", "code": "ERR001"}"#;
+        let event = parse_event("error", data).unwrap();
+        match event {
+            StreamEvent::Error(err) => {
+                assert_eq!(err.message, "Something went wrong");
+                assert_eq!(err.code, Some("ERR001".to_string()));
+            }
+            _ => panic!("Expected Error event"),
+        }
+    }
+
+    #[test]
+    fn test_parse_event_error_no_code() {
+        let data = r#"{"message": "Error without code"}"#;
+        let event = parse_event("error", data).unwrap();
+        match event {
+            StreamEvent::Error(err) => {
+                assert_eq!(err.message, "Error without code");
+                assert_eq!(err.code, None);
+            }
+            _ => panic!("Expected Error event"),
+        }
+    }
+
+    #[test]
+    fn test_parse_event_unknown() {
+        let event = parse_event("custom_event", "some data").unwrap();
+        match event {
+            StreamEvent::Unknown { event_type, data } => {
+                assert_eq!(event_type, "custom_event");
+                assert_eq!(data, "some data");
+            }
+            _ => panic!("Expected Unknown event"),
+        }
+    }
+
+    #[test]
+    fn test_parse_event_invalid_content_json() {
+        let result = parse_event("content", "not valid json");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_event_invalid_error_json() {
+        let result = parse_event("error", "not valid json");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_create_session_request_serialization() {
+        let req = CreateSessionRequest {
+            model: Some("claude-3".to_string()),
+            system_prompt: Some("You are helpful".to_string()),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("claude-3"));
+        assert!(json.contains("You are helpful"));
+    }
+
+    #[test]
+    fn test_create_session_request_optional_fields() {
+        let req = CreateSessionRequest {
+            model: None,
+            system_prompt: None,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("null") || !json.contains("model\":\""));
+    }
+
+    #[test]
+    fn test_session_deserialization() {
+        let json = r#"{"id": "sess_123", "model": "claude-3", "created_at": "2026-01-10T00:00:00Z"}"#;
+        let session: Session = serde_json::from_str(json).unwrap();
+        assert_eq!(session.id, "sess_123");
+        assert_eq!(session.model, "claude-3");
+        assert_eq!(session.created_at, "2026-01-10T00:00:00Z");
+    }
+
+    #[test]
+    fn test_send_message_request_serialization() {
+        let req = SendMessageRequest {
+            content: "Hello!".to_string(),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("Hello!"));
+    }
+
+    #[test]
+    fn test_content_event_deserialization() {
+        let json = r#"{"text": "Response text"}"#;
+        let event: ContentEvent = serde_json::from_str(json).unwrap();
+        assert_eq!(event.text, "Response text");
+    }
+
+    #[test]
+    fn test_error_event_deserialization() {
+        let json = r#"{"message": "Rate limited", "code": "429"}"#;
+        let event: ErrorEvent = serde_json::from_str(json).unwrap();
+        assert_eq!(event.message, "Rate limited");
+        assert_eq!(event.code, Some("429".to_string()));
+    }
+
+    #[test]
+    fn test_stream_event_clone() {
+        let content = StreamEvent::Content(ContentEvent {
+            text: "test".to_string(),
+        });
+        let cloned = content.clone();
+        match cloned {
+            StreamEvent::Content(c) => assert_eq!(c.text, "test"),
+            _ => panic!("Clone failed"),
+        }
+
+        let done = StreamEvent::Done;
+        let done_cloned = done.clone();
+        assert!(matches!(done_cloned, StreamEvent::Done));
+
+        let error = StreamEvent::Error(ErrorEvent {
+            message: "err".to_string(),
+            code: None,
+        });
+        let error_cloned = error.clone();
+        match error_cloned {
+            StreamEvent::Error(e) => assert_eq!(e.message, "err"),
+            _ => panic!("Clone failed"),
+        }
+
+        let unknown = StreamEvent::Unknown {
+            event_type: "custom".to_string(),
+            data: "data".to_string(),
+        };
+        let unknown_cloned = unknown.clone();
+        match unknown_cloned {
+            StreamEvent::Unknown { event_type, data } => {
+                assert_eq!(event_type, "custom");
+                assert_eq!(data, "data");
+            }
+            _ => panic!("Clone failed"),
+        }
+    }
+
+    #[test]
+    fn test_stream_event_debug() {
+        let content = StreamEvent::Content(ContentEvent {
+            text: "test".to_string(),
+        });
+        let debug_str = format!("{:?}", content);
+        assert!(debug_str.contains("Content"));
+
+        let done = StreamEvent::Done;
+        let debug_str = format!("{:?}", done);
+        assert!(debug_str.contains("Done"));
+    }
+
+    #[test]
+    fn test_content_event_clone() {
+        let event = ContentEvent {
+            text: "hello".to_string(),
+        };
+        let cloned = event.clone();
+        assert_eq!(cloned.text, "hello");
+    }
+
+    #[test]
+    fn test_error_event_clone() {
+        let event = ErrorEvent {
+            message: "error".to_string(),
+            code: Some("500".to_string()),
+        };
+        let cloned = event.clone();
+        assert_eq!(cloned.message, "error");
+        assert_eq!(cloned.code, Some("500".to_string()));
+    }
 }

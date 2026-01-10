@@ -1,25 +1,11 @@
 //! Outer.sh server - collaborative AI conversation interface
 
-mod error;
-mod models;
-mod opencode;
-mod store;
-mod websocket;
-
 use axum::{routing::get, Router};
+use outer::AppState;
 use sqlx::sqlite::SqlitePoolOptions;
-use std::sync::Arc;
-use tokio::sync::RwLock;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-
-use crate::store::Store;
-
-/// Application state shared across handlers
-pub struct AppState {
-    pub store: Store,
-}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -43,13 +29,12 @@ async fn main() -> anyhow::Result<()> {
     // Run migrations
     sqlx::migrate!("./migrations").run(&pool).await?;
 
-    let store = Store::new(pool);
-    let state = Arc::new(AppState { store });
+    let state = AppState::new(pool);
 
     // Build router
     let app = Router::new()
         .route("/health", get(health))
-        .route("/ws", get(websocket::handler))
+        .route("/ws", get(outer::websocket::handler))
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive())
         .with_state(state);

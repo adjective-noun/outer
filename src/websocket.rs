@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
 
+use crate::error;
 use crate::models::{BlockStatus, BlockType};
 use crate::opencode::{OpenCodeClient, SendMessageRequest, StreamEvent};
 use crate::AppState;
@@ -177,7 +178,7 @@ async fn handle_submit(
     journal_id: Uuid,
     content: String,
     session_id: Option<String>,
-) -> crate::error::Result<()> {
+) -> error::Result<()> {
     // Create user block
     let user_block = state
         .store
@@ -191,7 +192,7 @@ async fn handle_submit(
     sender
         .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
         .await
-        .map_err(|e| crate::error::AppError::Internal(e.to_string()))?;
+        .map_err(|e| error::AppError::Internal(e.to_string()))?;
 
     // Create assistant block (pending)
     let assistant_block = state
@@ -205,7 +206,7 @@ async fn handle_submit(
     sender
         .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
         .await
-        .map_err(|e| crate::error::AppError::Internal(e.to_string()))?;
+        .map_err(|e| error::AppError::Internal(e.to_string()))?;
 
     // Get or create session
     let session_id = match session_id {
@@ -234,7 +235,7 @@ async fn handle_submit(
     sender
         .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
         .await
-        .map_err(|e| crate::error::AppError::Internal(e.to_string()))?;
+        .map_err(|e| error::AppError::Internal(e.to_string()))?;
 
     // Stream response from OpenCode
     let mut stream = opencode
@@ -256,7 +257,7 @@ async fn handle_submit(
                 sender
                     .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
                     .await
-                    .map_err(|e| crate::error::AppError::Internal(e.to_string()))?;
+                    .map_err(|e| error::AppError::Internal(e.to_string()))?;
             }
             Ok(StreamEvent::Done) => {
                 // Update block to complete
@@ -276,7 +277,7 @@ async fn handle_submit(
                 sender
                     .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
                     .await
-                    .map_err(|e| crate::error::AppError::Internal(e.to_string()))?;
+                    .map_err(|e| error::AppError::Internal(e.to_string()))?;
             }
             Ok(StreamEvent::Error(error_event)) => {
                 // Update block to error
@@ -296,7 +297,7 @@ async fn handle_submit(
                 sender
                     .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
                     .await
-                    .map_err(|e| crate::error::AppError::Internal(e.to_string()))?;
+                    .map_err(|e| error::AppError::Internal(e.to_string()))?;
             }
             Ok(StreamEvent::Unknown { .. }) => {
                 // Ignore unknown events
@@ -359,4 +360,218 @@ pub enum ServerMessage {
     },
     /// Error occurred
     Error { message: String },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+
+    #[test]
+    fn test_client_message_submit_deserialization() {
+        let journal_id = Uuid::new_v4();
+        let json = format!(
+            r#"{{"type": "submit", "journal_id": "{}", "content": "Hello", "session_id": "sess_123"}}"#,
+            journal_id
+        );
+        let msg: ClientMessage = serde_json::from_str(&json).unwrap();
+        match msg {
+            ClientMessage::Submit {
+                journal_id: jid,
+                content,
+                session_id,
+            } => {
+                assert_eq!(jid, journal_id);
+                assert_eq!(content, "Hello");
+                assert_eq!(session_id, Some("sess_123".to_string()));
+            }
+            _ => panic!("Expected Submit message"),
+        }
+    }
+
+    #[test]
+    fn test_client_message_submit_no_session() {
+        let journal_id = Uuid::new_v4();
+        let json = format!(
+            r#"{{"type": "submit", "journal_id": "{}", "content": "Test"}}"#,
+            journal_id
+        );
+        let msg: ClientMessage = serde_json::from_str(&json).unwrap();
+        match msg {
+            ClientMessage::Submit { session_id, .. } => {
+                assert_eq!(session_id, None);
+            }
+            _ => panic!("Expected Submit message"),
+        }
+    }
+
+    #[test]
+    fn test_client_message_create_journal() {
+        let json = r#"{"type": "create_journal", "title": "My Journal"}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            ClientMessage::CreateJournal { title } => {
+                assert_eq!(title, Some("My Journal".to_string()));
+            }
+            _ => panic!("Expected CreateJournal message"),
+        }
+    }
+
+    #[test]
+    fn test_client_message_create_journal_no_title() {
+        let json = r#"{"type": "create_journal"}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            ClientMessage::CreateJournal { title } => {
+                assert_eq!(title, None);
+            }
+            _ => panic!("Expected CreateJournal message"),
+        }
+    }
+
+    #[test]
+    fn test_client_message_get_journal() {
+        let journal_id = Uuid::new_v4();
+        let json = format!(r#"{{"type": "get_journal", "journal_id": "{}"}}"#, journal_id);
+        let msg: ClientMessage = serde_json::from_str(&json).unwrap();
+        match msg {
+            ClientMessage::GetJournal { journal_id: jid } => {
+                assert_eq!(jid, journal_id);
+            }
+            _ => panic!("Expected GetJournal message"),
+        }
+    }
+
+    #[test]
+    fn test_client_message_list_journals() {
+        let json = r#"{"type": "list_journals"}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        assert!(matches!(msg, ClientMessage::ListJournals));
+    }
+
+    #[test]
+    fn test_client_message_invalid_type() {
+        let json = r#"{"type": "invalid_type"}"#;
+        let result: Result<ClientMessage, _> = serde_json::from_str(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_server_message_journal_created() {
+        let journal_id = Uuid::new_v4();
+        let msg = ServerMessage::JournalCreated {
+            journal_id,
+            title: "Test".to_string(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("journal_created"));
+        assert!(json.contains("Test"));
+    }
+
+    #[test]
+    fn test_server_message_journal() {
+        let journal = crate::models::Journal {
+            id: Uuid::nil(),
+            title: "Test Journal".to_string(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        let msg = ServerMessage::Journal {
+            journal,
+            blocks: vec![],
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("journal"));
+        assert!(json.contains("Test Journal"));
+    }
+
+    #[test]
+    fn test_server_message_journals() {
+        let msg = ServerMessage::Journals { journals: vec![] };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("journals"));
+    }
+
+    #[test]
+    fn test_server_message_block_created() {
+        let block = crate::models::Block {
+            id: Uuid::nil(),
+            journal_id: Uuid::nil(),
+            block_type: BlockType::User,
+            content: "Hello".to_string(),
+            status: BlockStatus::Complete,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        let msg = ServerMessage::BlockCreated { block };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("block_created"));
+        assert!(json.contains("Hello"));
+    }
+
+    #[test]
+    fn test_server_message_block_content_delta() {
+        let block_id = Uuid::new_v4();
+        let msg = ServerMessage::BlockContentDelta {
+            block_id,
+            delta: "new content".to_string(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("block_content_delta"));
+        assert!(json.contains("new content"));
+    }
+
+    #[test]
+    fn test_server_message_block_status_changed() {
+        let block_id = Uuid::new_v4();
+        let msg = ServerMessage::BlockStatusChanged {
+            block_id,
+            status: BlockStatus::Streaming,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("block_status_changed"));
+        assert!(json.contains("streaming"));
+    }
+
+    #[test]
+    fn test_server_message_error() {
+        let msg = ServerMessage::Error {
+            message: "Something went wrong".to_string(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("error"));
+        assert!(json.contains("Something went wrong"));
+    }
+
+    #[test]
+    fn test_server_message_debug() {
+        let msg = ServerMessage::Error {
+            message: "test".to_string(),
+        };
+        let debug_str = format!("{:?}", msg);
+        assert!(debug_str.contains("Error"));
+    }
+
+    #[test]
+    fn test_client_message_debug() {
+        let msg = ClientMessage::ListJournals;
+        let debug_str = format!("{:?}", msg);
+        assert!(debug_str.contains("ListJournals"));
+    }
+
+    #[test]
+    fn test_all_block_statuses_in_server_message() {
+        let block_id = Uuid::new_v4();
+
+        for status in [
+            BlockStatus::Pending,
+            BlockStatus::Streaming,
+            BlockStatus::Complete,
+            BlockStatus::Error,
+        ] {
+            let msg = ServerMessage::BlockStatusChanged { block_id, status };
+            let json = serde_json::to_string(&msg).unwrap();
+            assert!(json.contains(status.as_str()));
+        }
+    }
 }

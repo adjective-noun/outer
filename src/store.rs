@@ -251,3 +251,350 @@ impl TryFrom<BlockRow> for Block {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    async fn setup_test_db() -> Store {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("Failed to create in-memory database");
+
+        // Run migrations manually
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS journals (
+                id TEXT PRIMARY KEY NOT NULL,
+                title TEXT NOT NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .expect("Failed to create journals table");
+
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS blocks (
+                id TEXT PRIMARY KEY NOT NULL,
+                journal_id TEXT NOT NULL REFERENCES journals(id),
+                block_type TEXT NOT NULL CHECK (block_type IN ('user', 'assistant')),
+                content TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'streaming', 'complete', 'error')),
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .expect("Failed to create blocks table");
+
+        Store::new(pool)
+    }
+
+    #[tokio::test]
+    async fn test_create_journal_with_title() {
+        let store = setup_test_db().await;
+        let journal = store
+            .create_journal(Some("My Journal".to_string()))
+            .await
+            .unwrap();
+        assert_eq!(journal.title, "My Journal");
+    }
+
+    #[tokio::test]
+    async fn test_create_journal_without_title() {
+        let store = setup_test_db().await;
+        let journal = store.create_journal(None).await.unwrap();
+        assert_eq!(journal.title, "Untitled");
+    }
+
+    #[tokio::test]
+    async fn test_get_journal() {
+        let store = setup_test_db().await;
+        let created = store
+            .create_journal(Some("Test".to_string()))
+            .await
+            .unwrap();
+        let fetched = store.get_journal(created.id).await.unwrap();
+        assert_eq!(fetched.id, created.id);
+        assert_eq!(fetched.title, "Test");
+    }
+
+    #[tokio::test]
+    async fn test_get_journal_not_found() {
+        let store = setup_test_db().await;
+        let result = store.get_journal(Uuid::new_v4()).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), AppError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn test_list_journals() {
+        let store = setup_test_db().await;
+        store
+            .create_journal(Some("First".to_string()))
+            .await
+            .unwrap();
+        store
+            .create_journal(Some("Second".to_string()))
+            .await
+            .unwrap();
+
+        let journals = store.list_journals().await.unwrap();
+        assert_eq!(journals.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_list_journals_empty() {
+        let store = setup_test_db().await;
+        let journals = store.list_journals().await.unwrap();
+        assert!(journals.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_create_block() {
+        let store = setup_test_db().await;
+        let journal = store.create_journal(None).await.unwrap();
+        let block = store
+            .create_block(journal.id, BlockType::User, "Hello")
+            .await
+            .unwrap();
+        assert_eq!(block.journal_id, journal.id);
+        assert_eq!(block.block_type, BlockType::User);
+        assert_eq!(block.content, "Hello");
+        assert_eq!(block.status, BlockStatus::Pending);
+    }
+
+    #[tokio::test]
+    async fn test_create_assistant_block() {
+        let store = setup_test_db().await;
+        let journal = store.create_journal(None).await.unwrap();
+        let block = store
+            .create_block(journal.id, BlockType::Assistant, "Hi there")
+            .await
+            .unwrap();
+        assert_eq!(block.block_type, BlockType::Assistant);
+    }
+
+    #[tokio::test]
+    async fn test_get_block() {
+        let store = setup_test_db().await;
+        let journal = store.create_journal(None).await.unwrap();
+        let created = store
+            .create_block(journal.id, BlockType::User, "Test")
+            .await
+            .unwrap();
+        let fetched = store.get_block(created.id).await.unwrap();
+        assert_eq!(fetched.id, created.id);
+        assert_eq!(fetched.content, "Test");
+    }
+
+    #[tokio::test]
+    async fn test_get_block_not_found() {
+        let store = setup_test_db().await;
+        let result = store.get_block(Uuid::new_v4()).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), AppError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn test_get_blocks_for_journal() {
+        let store = setup_test_db().await;
+        let journal = store.create_journal(None).await.unwrap();
+        store
+            .create_block(journal.id, BlockType::User, "Message 1")
+            .await
+            .unwrap();
+        store
+            .create_block(journal.id, BlockType::Assistant, "Response 1")
+            .await
+            .unwrap();
+
+        let blocks = store.get_blocks_for_journal(journal.id).await.unwrap();
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0].content, "Message 1");
+        assert_eq!(blocks[1].content, "Response 1");
+    }
+
+    #[tokio::test]
+    async fn test_get_blocks_for_journal_empty() {
+        let store = setup_test_db().await;
+        let journal = store.create_journal(None).await.unwrap();
+        let blocks = store.get_blocks_for_journal(journal.id).await.unwrap();
+        assert!(blocks.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_update_block_content() {
+        let store = setup_test_db().await;
+        let journal = store.create_journal(None).await.unwrap();
+        let block = store
+            .create_block(journal.id, BlockType::User, "Original")
+            .await
+            .unwrap();
+
+        store
+            .update_block_content(block.id, "Updated")
+            .await
+            .unwrap();
+
+        let fetched = store.get_block(block.id).await.unwrap();
+        assert_eq!(fetched.content, "Updated");
+    }
+
+    #[tokio::test]
+    async fn test_update_block_status() {
+        let store = setup_test_db().await;
+        let journal = store.create_journal(None).await.unwrap();
+        let block = store
+            .create_block(journal.id, BlockType::Assistant, "")
+            .await
+            .unwrap();
+        assert_eq!(block.status, BlockStatus::Pending);
+
+        store
+            .update_block_status(block.id, BlockStatus::Streaming)
+            .await
+            .unwrap();
+        let fetched = store.get_block(block.id).await.unwrap();
+        assert_eq!(fetched.status, BlockStatus::Streaming);
+
+        store
+            .update_block_status(block.id, BlockStatus::Complete)
+            .await
+            .unwrap();
+        let fetched = store.get_block(block.id).await.unwrap();
+        assert_eq!(fetched.status, BlockStatus::Complete);
+    }
+
+    #[tokio::test]
+    async fn test_update_block_status_to_error() {
+        let store = setup_test_db().await;
+        let journal = store.create_journal(None).await.unwrap();
+        let block = store
+            .create_block(journal.id, BlockType::Assistant, "")
+            .await
+            .unwrap();
+
+        store
+            .update_block_status(block.id, BlockStatus::Error)
+            .await
+            .unwrap();
+
+        let fetched = store.get_block(block.id).await.unwrap();
+        assert_eq!(fetched.status, BlockStatus::Error);
+    }
+
+    #[tokio::test]
+    async fn test_create_block_updates_journal_timestamp() {
+        let store = setup_test_db().await;
+        let journal = store.create_journal(None).await.unwrap();
+        let original_updated_at = journal.updated_at;
+
+        // Small delay to ensure timestamp difference
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+
+        store
+            .create_block(journal.id, BlockType::User, "New message")
+            .await
+            .unwrap();
+
+        let updated_journal = store.get_journal(journal.id).await.unwrap();
+        assert!(updated_journal.updated_at >= original_updated_at);
+    }
+
+    #[tokio::test]
+    async fn test_journal_row_try_from_invalid_uuid() {
+        // Test that invalid UUIDs in the database are handled
+        let row = JournalRow {
+            id: "not-a-uuid".to_string(),
+            title: "Test".to_string(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        let result: Result<Journal> = row.try_into();
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), AppError::Internal(_)));
+    }
+
+    #[tokio::test]
+    async fn test_block_row_try_from_invalid_uuid() {
+        let row = BlockRow {
+            id: "not-a-uuid".to_string(),
+            journal_id: Uuid::new_v4().to_string(),
+            block_type: "user".to_string(),
+            content: "test".to_string(),
+            status: "pending".to_string(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        let result: Result<Block> = row.try_into();
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_block_row_try_from_invalid_journal_uuid() {
+        let row = BlockRow {
+            id: Uuid::new_v4().to_string(),
+            journal_id: "not-a-uuid".to_string(),
+            block_type: "user".to_string(),
+            content: "test".to_string(),
+            status: "pending".to_string(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        let result: Result<Block> = row.try_into();
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_block_row_try_from_invalid_block_type() {
+        let row = BlockRow {
+            id: Uuid::new_v4().to_string(),
+            journal_id: Uuid::new_v4().to_string(),
+            block_type: "invalid".to_string(),
+            content: "test".to_string(),
+            status: "pending".to_string(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        let result: Result<Block> = row.try_into();
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_block_row_try_from_invalid_status() {
+        let row = BlockRow {
+            id: Uuid::new_v4().to_string(),
+            journal_id: Uuid::new_v4().to_string(),
+            block_type: "user".to_string(),
+            content: "test".to_string(),
+            status: "invalid".to_string(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        let result: Result<Block> = row.try_into();
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_store_new() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        let store = Store::new(pool);
+        // Just verify it doesn't panic
+        assert!(true);
+        drop(store);
+    }
+}

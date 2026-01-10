@@ -101,3 +101,133 @@ pub struct CreateBlockRequest {
     pub journal_id: Uuid,
     pub content: String,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_block_type_as_str() {
+        assert_eq!(BlockType::User.as_str(), "user");
+        assert_eq!(BlockType::Assistant.as_str(), "assistant");
+    }
+
+    #[test]
+    fn test_block_type_from_str() {
+        assert_eq!("user".parse::<BlockType>().unwrap(), BlockType::User);
+        assert_eq!(
+            "assistant".parse::<BlockType>().unwrap(),
+            BlockType::Assistant
+        );
+    }
+
+    #[test]
+    fn test_block_type_from_str_invalid() {
+        let result = "invalid".parse::<BlockType>();
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Invalid block type: invalid");
+    }
+
+    #[test]
+    fn test_block_status_as_str() {
+        assert_eq!(BlockStatus::Pending.as_str(), "pending");
+        assert_eq!(BlockStatus::Streaming.as_str(), "streaming");
+        assert_eq!(BlockStatus::Complete.as_str(), "complete");
+        assert_eq!(BlockStatus::Error.as_str(), "error");
+    }
+
+    #[test]
+    fn test_block_status_from_str() {
+        assert_eq!(
+            "pending".parse::<BlockStatus>().unwrap(),
+            BlockStatus::Pending
+        );
+        assert_eq!(
+            "streaming".parse::<BlockStatus>().unwrap(),
+            BlockStatus::Streaming
+        );
+        assert_eq!(
+            "complete".parse::<BlockStatus>().unwrap(),
+            BlockStatus::Complete
+        );
+        assert_eq!("error".parse::<BlockStatus>().unwrap(), BlockStatus::Error);
+    }
+
+    #[test]
+    fn test_block_status_from_str_invalid() {
+        let result = "invalid".parse::<BlockStatus>();
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Invalid block status: invalid");
+    }
+
+    #[test]
+    fn test_journal_serialization() {
+        let journal = Journal {
+            id: Uuid::nil(),
+            title: "Test".to_string(),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        let json = serde_json::to_string(&journal).unwrap();
+        assert!(json.contains("Test"));
+    }
+
+    #[test]
+    fn test_block_serialization() {
+        let block = Block {
+            id: Uuid::nil(),
+            journal_id: Uuid::nil(),
+            block_type: BlockType::User,
+            content: "Hello".to_string(),
+            status: BlockStatus::Complete,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        let json = serde_json::to_string(&block).unwrap();
+        assert!(json.contains("Hello"));
+        assert!(json.contains("user"));
+        assert!(json.contains("complete"));
+    }
+
+    #[test]
+    fn test_block_type_serde_rename() {
+        let json = r#""user""#;
+        let block_type: BlockType = serde_json::from_str(json).unwrap();
+        assert_eq!(block_type, BlockType::User);
+
+        let json = r#""assistant""#;
+        let block_type: BlockType = serde_json::from_str(json).unwrap();
+        assert_eq!(block_type, BlockType::Assistant);
+    }
+
+    #[test]
+    fn test_block_status_serde_rename() {
+        let json = r#""pending""#;
+        let status: BlockStatus = serde_json::from_str(json).unwrap();
+        assert_eq!(status, BlockStatus::Pending);
+
+        let json = r#""streaming""#;
+        let status: BlockStatus = serde_json::from_str(json).unwrap();
+        assert_eq!(status, BlockStatus::Streaming);
+    }
+
+    #[test]
+    fn test_create_journal_request_deserialization() {
+        let json = r#"{"title": "My Journal"}"#;
+        let req: CreateJournalRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.title, Some("My Journal".to_string()));
+
+        let json = r#"{}"#;
+        let req: CreateJournalRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.title, None);
+    }
+
+    #[test]
+    fn test_create_block_request_deserialization() {
+        let id = Uuid::new_v4();
+        let json = format!(r#"{{"journal_id": "{}", "content": "test"}}"#, id);
+        let req: CreateBlockRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(req.journal_id, id);
+        assert_eq!(req.content, "test");
+    }
+}
