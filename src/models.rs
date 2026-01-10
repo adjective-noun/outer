@@ -21,6 +21,12 @@ pub struct Block {
     pub block_type: BlockType,
     pub content: String,
     pub status: BlockStatus,
+    /// Parent block ID for timeline branching (the block this was forked after)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<Uuid>,
+    /// Original block ID that was forked/re-run to create this block
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub forked_from_id: Option<Uuid>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -180,6 +186,8 @@ mod tests {
             block_type: BlockType::User,
             content: "Hello".to_string(),
             status: BlockStatus::Complete,
+            parent_id: None,
+            forked_from_id: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -187,6 +195,31 @@ mod tests {
         assert!(json.contains("Hello"));
         assert!(json.contains("user"));
         assert!(json.contains("complete"));
+        // Optional fields should be skipped when None
+        assert!(!json.contains("parent_id"));
+        assert!(!json.contains("forked_from_id"));
+    }
+
+    #[test]
+    fn test_block_serialization_with_fork_fields() {
+        let parent_id = Uuid::new_v4();
+        let forked_from_id = Uuid::new_v4();
+        let block = Block {
+            id: Uuid::nil(),
+            journal_id: Uuid::nil(),
+            block_type: BlockType::User,
+            content: "Forked".to_string(),
+            status: BlockStatus::Complete,
+            parent_id: Some(parent_id),
+            forked_from_id: Some(forked_from_id),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        let json = serde_json::to_string(&block).unwrap();
+        assert!(json.contains("parent_id"));
+        assert!(json.contains("forked_from_id"));
+        assert!(json.contains(&parent_id.to_string()));
+        assert!(json.contains(&forked_from_id.to_string()));
     }
 
     #[test]

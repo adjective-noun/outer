@@ -84,14 +84,27 @@ impl Store {
         block_type: BlockType,
         content: &str,
     ) -> Result<Block> {
+        self.create_block_with_lineage(journal_id, block_type, content, None, None)
+            .await
+    }
+
+    /// Create a block with optional parent and forked_from IDs for timeline branching
+    pub async fn create_block_with_lineage(
+        &self,
+        journal_id: Uuid,
+        block_type: BlockType,
+        content: &str,
+        parent_id: Option<Uuid>,
+        forked_from_id: Option<Uuid>,
+    ) -> Result<Block> {
         let id = Uuid::new_v4();
         let now = Utc::now();
         let status = BlockStatus::Pending;
 
         sqlx::query(
             r#"
-            INSERT INTO blocks (id, journal_id, block_type, content, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO blocks (id, journal_id, block_type, content, status, parent_id, forked_from_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(id.to_string())
@@ -99,6 +112,8 @@ impl Store {
         .bind(block_type.as_str())
         .bind(content)
         .bind(status.as_str())
+        .bind(parent_id.map(|u| u.to_string()))
+        .bind(forked_from_id.map(|u| u.to_string()))
         .bind(now)
         .bind(now)
         .execute(&self.pool)
@@ -121,6 +136,8 @@ impl Store {
             block_type,
             content: content.to_string(),
             status,
+            parent_id,
+            forked_from_id,
             created_at: now,
             updated_at: now,
         })
@@ -129,7 +146,7 @@ impl Store {
     pub async fn get_block(&self, id: Uuid) -> Result<Block> {
         let row = sqlx::query_as::<_, BlockRow>(
             r#"
-            SELECT id, journal_id, block_type, content, status, created_at, updated_at
+            SELECT id, journal_id, block_type, content, status, parent_id, forked_from_id, created_at, updated_at
             FROM blocks
             WHERE id = ?
             "#,
@@ -145,7 +162,7 @@ impl Store {
     pub async fn get_blocks_for_journal(&self, journal_id: Uuid) -> Result<Vec<Block>> {
         let rows = sqlx::query_as::<_, BlockRow>(
             r#"
-            SELECT id, journal_id, block_type, content, status, created_at, updated_at
+            SELECT id, journal_id, block_type, content, status, parent_id, forked_from_id, created_at, updated_at
             FROM blocks
             WHERE journal_id = ?
             ORDER BY created_at ASC
@@ -191,6 +208,93 @@ impl Store {
 
         Ok(())
     }
+
+    /// Fork a block: create a new user block with the same content, branching from the parent
+    /// Returns the new user block (caller should then create assistant block and send to OpenCode)
+    pub async fn fork_block(&self, block_id: Uuid) -> Result<Block> {
+        let original = self.get_block(block_id).await?;
+
+        // For forking, we create a new user block with the original's content
+        // The parent_id points to the block we're forking after (creating a branch point)
+        // The forked_from_id points to the original block being forked
+        self.create_block_with_lineage(
+            original.journal_id,
+            BlockType::User,
+            &original.content,
+            Some(block_id), // parent_id: the block we're branching from
+            Some(block_id), // forked_from_id: the original block
+        )
+        .await
+    }
+
+    /// Re-run a block: create a new execution with the same prompt
+    /// For user blocks: creates new user block with same content, then caller sends to OpenCode
+    /// For assistant blocks: finds the preceding user block and re-runs that prompt
+    pub async fn rerun_block(&self, block_id: Uuid) -> Result<Block> {
+        let original = self.get_block(block_id).await?;
+
+        let (content, parent_id) = match original.block_type {
+            BlockType::User => {
+                // Re-run the user's message: use same content, fork from this block
+                (original.content.clone(), block_id)
+            }
+            BlockType::Assistant => {
+                // Find the preceding user block to get the prompt
+                let blocks = self.get_blocks_for_journal(original.journal_id).await?;
+                let user_block = blocks
+                    .iter()
+                    .rev()
+                    .find(|b| b.block_type == BlockType::User && b.created_at < original.created_at)
+                    .ok_or_else(|| {
+                        AppError::NotFound("No preceding user block found".to_string())
+                    })?;
+                (user_block.content.clone(), block_id)
+            }
+        };
+
+        self.create_block_with_lineage(
+            original.journal_id,
+            BlockType::User,
+            &content,
+            Some(parent_id),     // parent_id: branching point
+            Some(block_id),      // forked_from_id: the block being re-run
+        )
+        .await
+    }
+
+    /// Get blocks that were forked from a specific block
+    pub async fn get_forks(&self, block_id: Uuid) -> Result<Vec<Block>> {
+        let rows = sqlx::query_as::<_, BlockRow>(
+            r#"
+            SELECT id, journal_id, block_type, content, status, parent_id, forked_from_id, created_at, updated_at
+            FROM blocks
+            WHERE forked_from_id = ?
+            ORDER BY created_at ASC
+            "#,
+        )
+        .bind(block_id.to_string())
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter().map(|r| r.try_into()).collect()
+    }
+
+    /// Get child blocks (blocks that have this block as parent)
+    pub async fn get_children(&self, block_id: Uuid) -> Result<Vec<Block>> {
+        let rows = sqlx::query_as::<_, BlockRow>(
+            r#"
+            SELECT id, journal_id, block_type, content, status, parent_id, forked_from_id, created_at, updated_at
+            FROM blocks
+            WHERE parent_id = ?
+            ORDER BY created_at ASC
+            "#,
+        )
+        .bind(block_id.to_string())
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter().map(|r| r.try_into()).collect()
+    }
 }
 
 // Internal row types for sqlx
@@ -224,6 +328,8 @@ struct BlockRow {
     block_type: String,
     content: String,
     status: String,
+    parent_id: Option<String>,
+    forked_from_id: Option<String>,
     created_at: chrono::DateTime<Utc>,
     updated_at: chrono::DateTime<Utc>,
 }
@@ -232,6 +338,17 @@ impl TryFrom<BlockRow> for Block {
     type Error = AppError;
 
     fn try_from(row: BlockRow) -> Result<Self> {
+        let parent_id = row
+            .parent_id
+            .map(|s| Uuid::parse_str(&s))
+            .transpose()
+            .map_err(|e| AppError::Internal(format!("Invalid parent_id UUID: {}", e)))?;
+        let forked_from_id = row
+            .forked_from_id
+            .map(|s| Uuid::parse_str(&s))
+            .transpose()
+            .map_err(|e| AppError::Internal(format!("Invalid forked_from_id UUID: {}", e)))?;
+
         Ok(Block {
             id: Uuid::parse_str(&row.id)
                 .map_err(|e| AppError::Internal(format!("Invalid UUID: {}", e)))?,
@@ -246,6 +363,8 @@ impl TryFrom<BlockRow> for Block {
                 .status
                 .parse()
                 .map_err(|e| AppError::Internal(format!("Invalid status: {}", e)))?,
+            parent_id,
+            forked_from_id,
             created_at: row.created_at,
             updated_at: row.updated_at,
         })
@@ -287,6 +406,8 @@ mod tests {
                 block_type TEXT NOT NULL CHECK (block_type IN ('user', 'assistant')),
                 content TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'streaming', 'complete', 'error')),
+                parent_id TEXT REFERENCES blocks(id),
+                forked_from_id TEXT REFERENCES blocks(id),
                 created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
@@ -533,6 +654,8 @@ mod tests {
             block_type: "user".to_string(),
             content: "test".to_string(),
             status: "pending".to_string(),
+            parent_id: None,
+            forked_from_id: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -548,6 +671,8 @@ mod tests {
             block_type: "user".to_string(),
             content: "test".to_string(),
             status: "pending".to_string(),
+            parent_id: None,
+            forked_from_id: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -563,6 +688,8 @@ mod tests {
             block_type: "invalid".to_string(),
             content: "test".to_string(),
             status: "pending".to_string(),
+            parent_id: None,
+            forked_from_id: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -578,6 +705,42 @@ mod tests {
             block_type: "user".to_string(),
             content: "test".to_string(),
             status: "invalid".to_string(),
+            parent_id: None,
+            forked_from_id: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        let result: Result<Block> = row.try_into();
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_block_row_try_from_invalid_parent_id() {
+        let row = BlockRow {
+            id: Uuid::new_v4().to_string(),
+            journal_id: Uuid::new_v4().to_string(),
+            block_type: "user".to_string(),
+            content: "test".to_string(),
+            status: "pending".to_string(),
+            parent_id: Some("not-a-uuid".to_string()),
+            forked_from_id: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        let result: Result<Block> = row.try_into();
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_block_row_try_from_invalid_forked_from_id() {
+        let row = BlockRow {
+            id: Uuid::new_v4().to_string(),
+            journal_id: Uuid::new_v4().to_string(),
+            block_type: "user".to_string(),
+            content: "test".to_string(),
+            status: "pending".to_string(),
+            parent_id: None,
+            forked_from_id: Some("not-a-uuid".to_string()),
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -596,5 +759,187 @@ mod tests {
         // Just verify it doesn't panic
         assert!(true);
         drop(store);
+    }
+
+    #[tokio::test]
+    async fn test_create_block_with_lineage() {
+        let store = setup_test_db().await;
+        let journal = store.create_journal(None).await.unwrap();
+
+        // First create a parent block that actually exists
+        let parent_block = store
+            .create_block(journal.id, BlockType::User, "Parent")
+            .await
+            .unwrap();
+
+        // Create another block that we'll fork from
+        let source_block = store
+            .create_block(journal.id, BlockType::User, "Source")
+            .await
+            .unwrap();
+
+        let block = store
+            .create_block_with_lineage(
+                journal.id,
+                BlockType::User,
+                "Test",
+                Some(parent_block.id),
+                Some(source_block.id),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(block.parent_id, Some(parent_block.id));
+        assert_eq!(block.forked_from_id, Some(source_block.id));
+
+        // Verify it persists
+        let fetched = store.get_block(block.id).await.unwrap();
+        assert_eq!(fetched.parent_id, Some(parent_block.id));
+        assert_eq!(fetched.forked_from_id, Some(source_block.id));
+    }
+
+    #[tokio::test]
+    async fn test_fork_block() {
+        let store = setup_test_db().await;
+        let journal = store.create_journal(None).await.unwrap();
+
+        // Create original user block
+        let original = store
+            .create_block(journal.id, BlockType::User, "Original message")
+            .await
+            .unwrap();
+
+        // Fork it
+        let forked = store.fork_block(original.id).await.unwrap();
+
+        assert_eq!(forked.content, "Original message");
+        assert_eq!(forked.block_type, BlockType::User);
+        assert_eq!(forked.parent_id, Some(original.id));
+        assert_eq!(forked.forked_from_id, Some(original.id));
+        assert_ne!(forked.id, original.id);
+    }
+
+    #[tokio::test]
+    async fn test_rerun_user_block() {
+        let store = setup_test_db().await;
+        let journal = store.create_journal(None).await.unwrap();
+
+        // Create original user block
+        let original = store
+            .create_block(journal.id, BlockType::User, "User prompt")
+            .await
+            .unwrap();
+
+        // Re-run it
+        let rerun = store.rerun_block(original.id).await.unwrap();
+
+        assert_eq!(rerun.content, "User prompt");
+        assert_eq!(rerun.block_type, BlockType::User);
+        assert_eq!(rerun.parent_id, Some(original.id));
+        assert_eq!(rerun.forked_from_id, Some(original.id));
+    }
+
+    #[tokio::test]
+    async fn test_rerun_assistant_block() {
+        let store = setup_test_db().await;
+        let journal = store.create_journal(None).await.unwrap();
+
+        // Create user block followed by assistant block
+        let user_block = store
+            .create_block(journal.id, BlockType::User, "User prompt")
+            .await
+            .unwrap();
+
+        // Small delay to ensure ordering
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+
+        let assistant_block = store
+            .create_block(journal.id, BlockType::Assistant, "Assistant response")
+            .await
+            .unwrap();
+
+        // Re-run the assistant block
+        let rerun = store.rerun_block(assistant_block.id).await.unwrap();
+
+        // Should create a new user block with the original user's content
+        assert_eq!(rerun.content, "User prompt");
+        assert_eq!(rerun.block_type, BlockType::User);
+        assert_eq!(rerun.parent_id, Some(assistant_block.id));
+        assert_eq!(rerun.forked_from_id, Some(assistant_block.id));
+    }
+
+    #[tokio::test]
+    async fn test_rerun_assistant_block_no_preceding_user() {
+        let store = setup_test_db().await;
+        let journal = store.create_journal(None).await.unwrap();
+
+        // Create only assistant block (edge case)
+        let assistant_block = store
+            .create_block(journal.id, BlockType::Assistant, "Response")
+            .await
+            .unwrap();
+
+        // Re-run should fail - no preceding user block
+        let result = store.rerun_block(assistant_block.id).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), AppError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn test_get_forks() {
+        let store = setup_test_db().await;
+        let journal = store.create_journal(None).await.unwrap();
+
+        let original = store
+            .create_block(journal.id, BlockType::User, "Original")
+            .await
+            .unwrap();
+
+        // Create some forks
+        let _fork1 = store.fork_block(original.id).await.unwrap();
+        let _fork2 = store.fork_block(original.id).await.unwrap();
+
+        let forks = store.get_forks(original.id).await.unwrap();
+        assert_eq!(forks.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_get_children() {
+        let store = setup_test_db().await;
+        let journal = store.create_journal(None).await.unwrap();
+
+        let parent = store
+            .create_block(journal.id, BlockType::User, "Parent")
+            .await
+            .unwrap();
+
+        // Create children
+        let _child1 = store
+            .create_block_with_lineage(journal.id, BlockType::User, "Child 1", Some(parent.id), None)
+            .await
+            .unwrap();
+        let _child2 = store
+            .create_block_with_lineage(journal.id, BlockType::User, "Child 2", Some(parent.id), None)
+            .await
+            .unwrap();
+
+        let children = store.get_children(parent.id).await.unwrap();
+        assert_eq!(children.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_fork_nonexistent_block() {
+        let store = setup_test_db().await;
+        let result = store.fork_block(Uuid::new_v4()).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), AppError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn test_rerun_nonexistent_block() {
+        let store = setup_test_db().await;
+        let result = store.rerun_block(Uuid::new_v4()).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), AppError::NotFound(_)));
     }
 }
