@@ -1,5 +1,6 @@
 //! Outer.sh server - collaborative AI conversation interface
 
+pub mod crdt;
 pub mod error;
 pub mod models;
 pub mod opencode;
@@ -12,12 +13,14 @@ use std::sync::Arc;
 /// Application state shared across handlers
 pub struct AppState {
     pub store: store::Store,
+    pub room_manager: crdt::room::RoomManager,
 }
 
 impl AppState {
     pub fn new(pool: SqlitePool) -> Arc<Self> {
         Arc::new(Self {
             store: store::Store::new(pool),
+            room_manager: crdt::room::RoomManager::new(),
         })
     }
 }

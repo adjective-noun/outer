@@ -10,8 +10,10 @@ use axum::{
 use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use tokio::sync::Mutex;
 use uuid::Uuid;
 
+use crate::crdt::{Participant, ParticipantKind, ParticipantStatus, RoomEvent};
 use crate::error;
 use crate::models::{BlockStatus, BlockType};
 use crate::opencode::{OpenCodeClient, SendMessageRequest, StreamEvent};
@@ -25,13 +27,31 @@ pub async fn handler(
     ws.on_upgrade(move |socket| handle_socket(socket, state))
 }
 
+/// Connection state for tracking subscriptions
+struct ConnectionState {
+    /// Map of journal_id -> participant_id for this connection
+    subscriptions: std::collections::HashMap<Uuid, Uuid>,
+}
+
+impl ConnectionState {
+    fn new() -> Self {
+        Self {
+            subscriptions: std::collections::HashMap::new(),
+        }
+    }
+}
+
 async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
-    let (mut sender, mut receiver) = socket.split();
+    let (sender, mut receiver) = socket.split();
+    let sender = Arc::new(Mutex::new(sender));
 
     // Get OpenCode URL from environment
     let opencode_url =
         std::env::var("OPENCODE_URL").unwrap_or_else(|_| "http://localhost:8080".to_string());
     let opencode = OpenCodeClient::new(opencode_url);
+
+    // Connection state
+    let conn_state = Arc::new(Mutex::new(ConnectionState::new()));
 
     while let Some(msg) = receiver.next().await {
         let msg = match msg {
@@ -51,6 +71,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                 let error = ServerMessage::Error {
                     message: format!("Invalid message: {}", e),
                 };
+                let mut sender = sender.lock().await;
                 if let Err(e) = sender
                     .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
                     .await
@@ -68,8 +89,9 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                 content,
                 session_id,
             } => {
+                let mut sender_guard = sender.lock().await;
                 if let Err(e) = handle_submit(
-                    &mut sender,
+                    &mut sender_guard,
                     &state,
                     &opencode,
                     journal_id,
@@ -81,7 +103,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     let error = ServerMessage::Error {
                         message: e.to_string(),
                     };
-                    if let Err(e) = sender
+                    if let Err(e) = sender_guard
                         .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
                         .await
                     {
@@ -96,6 +118,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                             journal_id: journal.id,
                             title: journal.title,
                         };
+                        let mut sender = sender.lock().await;
                         if let Err(e) = sender
                             .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
                             .await
@@ -107,6 +130,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         let error = ServerMessage::Error {
                             message: e.to_string(),
                         };
+                        let mut sender = sender.lock().await;
                         if let Err(e) = sender
                             .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
                             .await
@@ -125,6 +149,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                             .await
                             .unwrap_or_default();
                         let msg = ServerMessage::Journal { journal, blocks };
+                        let mut sender = sender.lock().await;
                         if let Err(e) = sender
                             .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
                             .await
@@ -136,6 +161,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         let error = ServerMessage::Error {
                             message: e.to_string(),
                         };
+                        let mut sender = sender.lock().await;
                         if let Err(e) = sender
                             .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
                             .await
@@ -148,6 +174,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
             ClientMessage::ListJournals => match state.store.list_journals().await {
                 Ok(journals) => {
                     let msg = ServerMessage::Journals { journals };
+                    let mut sender = sender.lock().await;
                     if let Err(e) = sender
                         .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
                         .await
@@ -159,6 +186,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     let error = ServerMessage::Error {
                         message: e.to_string(),
                     };
+                    let mut sender = sender.lock().await;
                     if let Err(e) = sender
                         .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
                         .await
@@ -171,13 +199,14 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                 block_id,
                 session_id,
             } => {
+                let mut sender_guard = sender.lock().await;
                 if let Err(e) =
-                    handle_fork(&mut sender, &state, &opencode, block_id, session_id).await
+                    handle_fork(&mut sender_guard, &state, &opencode, block_id, session_id).await
                 {
                     let error = ServerMessage::Error {
                         message: e.to_string(),
                     };
-                    if let Err(e) = sender
+                    if let Err(e) = sender_guard
                         .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
                         .await
                     {
@@ -189,13 +218,14 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                 block_id,
                 session_id,
             } => {
+                let mut sender_guard = sender.lock().await;
                 if let Err(e) =
-                    handle_rerun(&mut sender, &state, &opencode, block_id, session_id).await
+                    handle_rerun(&mut sender_guard, &state, &opencode, block_id, session_id).await
                 {
                     let error = ServerMessage::Error {
                         message: e.to_string(),
                     };
-                    if let Err(e) = sender
+                    if let Err(e) = sender_guard
                         .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
                         .await
                     {
@@ -204,11 +234,12 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                 }
             }
             ClientMessage::Cancel { block_id } => {
-                if let Err(e) = handle_cancel(&mut sender, &state, block_id).await {
+                let mut sender_guard = sender.lock().await;
+                if let Err(e) = handle_cancel(&mut sender_guard, &state, block_id).await {
                     let error = ServerMessage::Error {
                         message: e.to_string(),
                     };
-                    if let Err(e) = sender
+                    if let Err(e) = sender_guard
                         .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
                         .await
                     {
@@ -216,8 +247,354 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     }
                 }
             }
+            ClientMessage::Subscribe {
+                journal_id,
+                name,
+                kind,
+            } => {
+                handle_subscribe(
+                    Arc::clone(&sender),
+                    &state,
+                    Arc::clone(&conn_state),
+                    journal_id,
+                    name,
+                    kind,
+                )
+                .await;
+            }
+            ClientMessage::Unsubscribe { journal_id } => {
+                handle_unsubscribe(
+                    Arc::clone(&sender),
+                    &state,
+                    Arc::clone(&conn_state),
+                    journal_id,
+                )
+                .await;
+            }
+            ClientMessage::Cursor {
+                journal_id,
+                block_id,
+                offset,
+            } => {
+                let conn = conn_state.lock().await;
+                if let Some(&participant_id) = conn.subscriptions.get(&journal_id) {
+                    if let Some(room) = state.room_manager.get(journal_id).await {
+                        room.update_cursor(participant_id, block_id, offset).await;
+                    }
+                }
+            }
+            ClientMessage::GetPresence { journal_id } => {
+                if let Some(room) = state.room_manager.get(journal_id).await {
+                    let participants = room.participants().await;
+                    let msg = ServerMessage::Presence {
+                        journal_id,
+                        participants,
+                    };
+                    let mut sender = sender.lock().await;
+                    if let Err(e) = sender
+                        .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                        .await
+                    {
+                        tracing::error!("Failed to send presence: {}", e);
+                    }
+                } else {
+                    let msg = ServerMessage::Presence {
+                        journal_id,
+                        participants: vec![],
+                    };
+                    let mut sender = sender.lock().await;
+                    let _ = sender
+                        .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                        .await;
+                }
+            }
+            ClientMessage::CrdtUpdate { journal_id, update } => {
+                let conn = conn_state.lock().await;
+                let participant_id = conn.subscriptions.get(&journal_id).copied();
+                drop(conn);
+
+                if let Some(room) = state.room_manager.get(journal_id).await {
+                    match base64_decode(&update) {
+                        Ok(update_bytes) => {
+                            if let Err(e) = room.apply_update(participant_id, &update_bytes).await {
+                                tracing::error!("Failed to apply CRDT update: {:?}", e);
+                            }
+                        }
+                        Err(e) => {
+                            let error = ServerMessage::Error {
+                                message: format!("Invalid base64 update: {}", e),
+                            };
+                            let mut sender = sender.lock().await;
+                            let _ = sender
+                                .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                                .await;
+                        }
+                    }
+                }
+            }
+            ClientMessage::SyncRequest {
+                journal_id,
+                state_vector,
+            } => {
+                if let Some(room) = state.room_manager.get(journal_id).await {
+                    let state_data = match state_vector {
+                        Some(sv) => {
+                            match base64_decode(&sv) {
+                                Ok(sv_bytes) => room.doc().encode_diff(&sv_bytes).ok(),
+                                Err(_) => Some(room.get_sync_state()),
+                            }
+                        }
+                        None => Some(room.get_sync_state()),
+                    };
+
+                    if let Some(data) = state_data {
+                        let msg = ServerMessage::SyncState {
+                            journal_id,
+                            state: base64_encode(&data),
+                        };
+                        let mut sender = sender.lock().await;
+                        if let Err(e) = sender
+                            .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                            .await
+                        {
+                            tracing::error!("Failed to send sync state: {}", e);
+                        }
+                    }
+                }
+            }
         }
     }
+
+    // Cleanup: Leave all subscribed rooms
+    let conn = conn_state.lock().await;
+    for (journal_id, participant_id) in conn.subscriptions.iter() {
+        if let Some(room) = state.room_manager.get(*journal_id).await {
+            room.leave(*participant_id).await;
+        }
+    }
+}
+
+/// Handle subscription to a journal
+async fn handle_subscribe(
+    sender: Arc<Mutex<futures::stream::SplitSink<WebSocket, Message>>>,
+    state: &Arc<AppState>,
+    conn_state: Arc<Mutex<ConnectionState>>,
+    journal_id: Uuid,
+    name: String,
+    kind: Option<String>,
+) {
+    let participant_kind = kind
+        .as_deref()
+        .and_then(|k| k.parse().ok())
+        .unwrap_or(ParticipantKind::User);
+
+    let room = state.room_manager.get_or_create(journal_id).await;
+    let participant = room.join(name, participant_kind).await;
+    let participant_id = participant.id;
+
+    // Store subscription
+    {
+        let mut conn = conn_state.lock().await;
+        conn.subscriptions.insert(journal_id, participant_id);
+    }
+
+    // Get current participants
+    let participants = room.participants().await;
+
+    // Send subscribed confirmation
+    let msg = ServerMessage::Subscribed {
+        journal_id,
+        participant: participant.clone(),
+        participants,
+    };
+    {
+        let mut sender_guard = sender.lock().await;
+        if let Err(e) = sender_guard
+            .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+            .await
+        {
+            tracing::error!("Failed to send subscribed: {}", e);
+        }
+    }
+
+    // Spawn task to forward room events to this client
+    let mut room_rx = room.subscribe();
+    let sender_clone = Arc::clone(&sender);
+
+    tokio::spawn(async move {
+        while let Ok(event) = room_rx.recv().await {
+            let server_msg = match event {
+                RoomEvent::ParticipantJoined(p) => {
+                    // Don't send our own join event
+                    if p.id == participant_id {
+                        continue;
+                    }
+                    Some(ServerMessage::ParticipantJoined {
+                        journal_id,
+                        participant: p,
+                    })
+                }
+                RoomEvent::ParticipantLeft { participant_id: pid } => {
+                    Some(ServerMessage::ParticipantLeft {
+                        journal_id,
+                        participant_id: pid,
+                    })
+                }
+                RoomEvent::CursorMoved {
+                    participant_id: pid,
+                    block_id,
+                    offset,
+                } => {
+                    // Don't echo our own cursor moves
+                    if pid == participant_id {
+                        continue;
+                    }
+                    Some(ServerMessage::CursorMoved {
+                        journal_id,
+                        participant_id: pid,
+                        block_id,
+                        offset,
+                    })
+                }
+                RoomEvent::StatusChanged {
+                    participant_id: pid,
+                    status,
+                } => Some(ServerMessage::ParticipantStatusChanged {
+                    journal_id,
+                    participant_id: pid,
+                    status,
+                }),
+                RoomEvent::CrdtUpdate { source, update } => {
+                    // Don't echo our own updates
+                    if source == Some(participant_id) {
+                        continue;
+                    }
+                    Some(ServerMessage::CrdtUpdate {
+                        journal_id,
+                        source,
+                        update: base64_encode(&update),
+                    })
+                }
+                RoomEvent::SyncState { state } => Some(ServerMessage::SyncState {
+                    journal_id,
+                    state: base64_encode(&state),
+                }),
+            };
+
+            if let Some(msg) = server_msg {
+                let mut sender_guard = sender_clone.lock().await;
+                if sender_guard
+                    .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                    .await
+                    .is_err()
+                {
+                    // Connection closed
+                    break;
+                }
+            }
+        }
+    });
+}
+
+/// Handle unsubscription from a journal
+async fn handle_unsubscribe(
+    sender: Arc<Mutex<futures::stream::SplitSink<WebSocket, Message>>>,
+    state: &Arc<AppState>,
+    conn_state: Arc<Mutex<ConnectionState>>,
+    journal_id: Uuid,
+) {
+    let participant_id = {
+        let mut conn = conn_state.lock().await;
+        conn.subscriptions.remove(&journal_id)
+    };
+
+    if let Some(pid) = participant_id {
+        if let Some(room) = state.room_manager.get(journal_id).await {
+            room.leave(pid).await;
+        }
+    }
+
+    let msg = ServerMessage::Unsubscribed { journal_id };
+    let mut sender = sender.lock().await;
+    let _ = sender
+        .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+        .await;
+}
+
+/// Base64 encode helper
+fn base64_encode(data: &[u8]) -> String {
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut result = String::with_capacity((data.len() + 2) / 3 * 4);
+
+    for chunk in data.chunks(3) {
+        let b0 = chunk[0] as usize;
+        let b1 = chunk.get(1).copied().unwrap_or(0) as usize;
+        let b2 = chunk.get(2).copied().unwrap_or(0) as usize;
+
+        result.push(ALPHABET[b0 >> 2] as char);
+        result.push(ALPHABET[((b0 & 0x03) << 4) | (b1 >> 4)] as char);
+
+        if chunk.len() > 1 {
+            result.push(ALPHABET[((b1 & 0x0f) << 2) | (b2 >> 6)] as char);
+        } else {
+            result.push('=');
+        }
+
+        if chunk.len() > 2 {
+            result.push(ALPHABET[b2 & 0x3f] as char);
+        } else {
+            result.push('=');
+        }
+    }
+
+    result
+}
+
+/// Base64 decode helper
+fn base64_decode(data: &str) -> Result<Vec<u8>, String> {
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+    fn decode_char(c: u8) -> Result<u8, String> {
+        if c == b'=' {
+            return Ok(0);
+        }
+        ALPHABET
+            .iter()
+            .position(|&x| x == c)
+            .map(|p| p as u8)
+            .ok_or_else(|| format!("Invalid base64 character: {}", c as char))
+    }
+
+    let data = data.trim();
+    if data.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let bytes: Vec<u8> = data.bytes().filter(|&b| b != b'\n' && b != b'\r').collect();
+    if bytes.len() % 4 != 0 {
+        return Err("Invalid base64 length".to_string());
+    }
+
+    let mut result = Vec::with_capacity(bytes.len() / 4 * 3);
+
+    for chunk in bytes.chunks(4) {
+        let b0 = decode_char(chunk[0])?;
+        let b1 = decode_char(chunk[1])?;
+        let b2 = decode_char(chunk[2])?;
+        let b3 = decode_char(chunk[3])?;
+
+        result.push((b0 << 2) | (b1 >> 4));
+
+        if chunk[2] != b'=' {
+            result.push((b1 << 4) | (b2 >> 2));
+        }
+
+        if chunk[3] != b'=' {
+            result.push((b2 << 6) | b3);
+        }
+    }
+
+    Ok(result)
 }
 
 async fn handle_submit(
@@ -632,6 +1009,35 @@ pub enum ClientMessage {
     },
     /// Cancel a streaming block
     Cancel { block_id: Uuid },
+    /// Subscribe to a journal for real-time updates
+    Subscribe {
+        journal_id: Uuid,
+        name: String,
+        #[serde(default)]
+        kind: Option<String>,
+    },
+    /// Unsubscribe from a journal
+    Unsubscribe { journal_id: Uuid },
+    /// Update cursor position
+    Cursor {
+        journal_id: Uuid,
+        block_id: Option<Uuid>,
+        offset: Option<u32>,
+    },
+    /// Request presence information for a journal
+    GetPresence { journal_id: Uuid },
+    /// Apply a CRDT update
+    CrdtUpdate {
+        journal_id: Uuid,
+        /// Base64-encoded update data
+        update: String,
+    },
+    /// Request sync state for a journal
+    SyncRequest {
+        journal_id: Uuid,
+        /// Base64-encoded state vector (optional, for diff sync)
+        state_vector: Option<String>,
+    },
 }
 
 /// Messages from server to client
@@ -667,6 +1073,56 @@ pub enum ServerMessage {
     BlockCancelled { block_id: Uuid },
     /// Error occurred
     Error { message: String },
+    /// Successfully subscribed to a journal
+    Subscribed {
+        journal_id: Uuid,
+        participant: Participant,
+        /// Current participants in the room
+        participants: Vec<Participant>,
+    },
+    /// Unsubscribed from a journal
+    Unsubscribed { journal_id: Uuid },
+    /// A participant joined the journal
+    ParticipantJoined {
+        journal_id: Uuid,
+        participant: Participant,
+    },
+    /// A participant left the journal
+    ParticipantLeft {
+        journal_id: Uuid,
+        participant_id: Uuid,
+    },
+    /// A participant's cursor moved
+    CursorMoved {
+        journal_id: Uuid,
+        participant_id: Uuid,
+        block_id: Option<Uuid>,
+        offset: Option<u32>,
+    },
+    /// A participant's status changed
+    ParticipantStatusChanged {
+        journal_id: Uuid,
+        participant_id: Uuid,
+        status: ParticipantStatus,
+    },
+    /// Presence information for a journal
+    Presence {
+        journal_id: Uuid,
+        participants: Vec<Participant>,
+    },
+    /// CRDT update to apply
+    CrdtUpdate {
+        journal_id: Uuid,
+        source: Option<Uuid>,
+        /// Base64-encoded update data
+        update: String,
+    },
+    /// Full sync state
+    SyncState {
+        journal_id: Uuid,
+        /// Base64-encoded state data
+        state: String,
+    },
 }
 
 #[cfg(test)]
@@ -995,5 +1451,315 @@ mod tests {
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains("block_cancelled"));
         assert!(json.contains(&block_id.to_string()));
+    }
+
+    // New CRDT/Presence message tests
+
+    #[test]
+    fn test_client_message_subscribe() {
+        let journal_id = Uuid::new_v4();
+        let json = format!(
+            r#"{{"type": "subscribe", "journal_id": "{}", "name": "Alice", "kind": "user"}}"#,
+            journal_id
+        );
+        let msg: ClientMessage = serde_json::from_str(&json).unwrap();
+        match msg {
+            ClientMessage::Subscribe {
+                journal_id: jid,
+                name,
+                kind,
+            } => {
+                assert_eq!(jid, journal_id);
+                assert_eq!(name, "Alice");
+                assert_eq!(kind, Some("user".to_string()));
+            }
+            _ => panic!("Expected Subscribe message"),
+        }
+    }
+
+    #[test]
+    fn test_client_message_subscribe_no_kind() {
+        let journal_id = Uuid::new_v4();
+        let json = format!(
+            r#"{{"type": "subscribe", "journal_id": "{}", "name": "Bob"}}"#,
+            journal_id
+        );
+        let msg: ClientMessage = serde_json::from_str(&json).unwrap();
+        match msg {
+            ClientMessage::Subscribe { kind, .. } => {
+                assert_eq!(kind, None);
+            }
+            _ => panic!("Expected Subscribe message"),
+        }
+    }
+
+    #[test]
+    fn test_client_message_unsubscribe() {
+        let journal_id = Uuid::new_v4();
+        let json = format!(r#"{{"type": "unsubscribe", "journal_id": "{}"}}"#, journal_id);
+        let msg: ClientMessage = serde_json::from_str(&json).unwrap();
+        match msg {
+            ClientMessage::Unsubscribe { journal_id: jid } => {
+                assert_eq!(jid, journal_id);
+            }
+            _ => panic!("Expected Unsubscribe message"),
+        }
+    }
+
+    #[test]
+    fn test_client_message_cursor() {
+        let journal_id = Uuid::new_v4();
+        let block_id = Uuid::new_v4();
+        let json = format!(
+            r#"{{"type": "cursor", "journal_id": "{}", "block_id": "{}", "offset": 42}}"#,
+            journal_id, block_id
+        );
+        let msg: ClientMessage = serde_json::from_str(&json).unwrap();
+        match msg {
+            ClientMessage::Cursor {
+                journal_id: jid,
+                block_id: bid,
+                offset,
+            } => {
+                assert_eq!(jid, journal_id);
+                assert_eq!(bid, Some(block_id));
+                assert_eq!(offset, Some(42));
+            }
+            _ => panic!("Expected Cursor message"),
+        }
+    }
+
+    #[test]
+    fn test_client_message_cursor_null_position() {
+        let journal_id = Uuid::new_v4();
+        let json = format!(r#"{{"type": "cursor", "journal_id": "{}"}}"#, journal_id);
+        let msg: ClientMessage = serde_json::from_str(&json).unwrap();
+        match msg {
+            ClientMessage::Cursor {
+                block_id, offset, ..
+            } => {
+                assert_eq!(block_id, None);
+                assert_eq!(offset, None);
+            }
+            _ => panic!("Expected Cursor message"),
+        }
+    }
+
+    #[test]
+    fn test_client_message_get_presence() {
+        let journal_id = Uuid::new_v4();
+        let json = format!(r#"{{"type": "get_presence", "journal_id": "{}"}}"#, journal_id);
+        let msg: ClientMessage = serde_json::from_str(&json).unwrap();
+        match msg {
+            ClientMessage::GetPresence { journal_id: jid } => {
+                assert_eq!(jid, journal_id);
+            }
+            _ => panic!("Expected GetPresence message"),
+        }
+    }
+
+    #[test]
+    fn test_client_message_crdt_update() {
+        let journal_id = Uuid::new_v4();
+        let json = format!(
+            r#"{{"type": "crdt_update", "journal_id": "{}", "update": "SGVsbG8="}}"#,
+            journal_id
+        );
+        let msg: ClientMessage = serde_json::from_str(&json).unwrap();
+        match msg {
+            ClientMessage::CrdtUpdate {
+                journal_id: jid,
+                update,
+            } => {
+                assert_eq!(jid, journal_id);
+                assert_eq!(update, "SGVsbG8=");
+            }
+            _ => panic!("Expected CrdtUpdate message"),
+        }
+    }
+
+    #[test]
+    fn test_client_message_sync_request() {
+        let journal_id = Uuid::new_v4();
+        let json = format!(
+            r#"{{"type": "sync_request", "journal_id": "{}", "state_vector": "AQAA"}}"#,
+            journal_id
+        );
+        let msg: ClientMessage = serde_json::from_str(&json).unwrap();
+        match msg {
+            ClientMessage::SyncRequest {
+                journal_id: jid,
+                state_vector,
+            } => {
+                assert_eq!(jid, journal_id);
+                assert_eq!(state_vector, Some("AQAA".to_string()));
+            }
+            _ => panic!("Expected SyncRequest message"),
+        }
+    }
+
+    #[test]
+    fn test_client_message_sync_request_no_sv() {
+        let journal_id = Uuid::new_v4();
+        let json = format!(r#"{{"type": "sync_request", "journal_id": "{}"}}"#, journal_id);
+        let msg: ClientMessage = serde_json::from_str(&json).unwrap();
+        match msg {
+            ClientMessage::SyncRequest { state_vector, .. } => {
+                assert_eq!(state_vector, None);
+            }
+            _ => panic!("Expected SyncRequest message"),
+        }
+    }
+
+    #[test]
+    fn test_server_message_subscribed() {
+        let journal_id = Uuid::new_v4();
+        let participant = Participant::new("Alice", ParticipantKind::User);
+        let msg = ServerMessage::Subscribed {
+            journal_id,
+            participant: participant.clone(),
+            participants: vec![participant],
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("subscribed"));
+        assert!(json.contains("Alice"));
+    }
+
+    #[test]
+    fn test_server_message_unsubscribed() {
+        let journal_id = Uuid::new_v4();
+        let msg = ServerMessage::Unsubscribed { journal_id };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("unsubscribed"));
+    }
+
+    #[test]
+    fn test_server_message_participant_joined() {
+        let journal_id = Uuid::new_v4();
+        let participant = Participant::new("Bob", ParticipantKind::Agent);
+        let msg = ServerMessage::ParticipantJoined {
+            journal_id,
+            participant,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("participant_joined"));
+        assert!(json.contains("Bob"));
+        assert!(json.contains("agent"));
+    }
+
+    #[test]
+    fn test_server_message_participant_left() {
+        let journal_id = Uuid::new_v4();
+        let participant_id = Uuid::new_v4();
+        let msg = ServerMessage::ParticipantLeft {
+            journal_id,
+            participant_id,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("participant_left"));
+        assert!(json.contains(&participant_id.to_string()));
+    }
+
+    #[test]
+    fn test_server_message_cursor_moved() {
+        let journal_id = Uuid::new_v4();
+        let participant_id = Uuid::new_v4();
+        let block_id = Uuid::new_v4();
+        let msg = ServerMessage::CursorMoved {
+            journal_id,
+            participant_id,
+            block_id: Some(block_id),
+            offset: Some(100),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("cursor_moved"));
+        assert!(json.contains(&block_id.to_string()));
+    }
+
+    #[test]
+    fn test_server_message_participant_status_changed() {
+        let journal_id = Uuid::new_v4();
+        let participant_id = Uuid::new_v4();
+        let msg = ServerMessage::ParticipantStatusChanged {
+            journal_id,
+            participant_id,
+            status: ParticipantStatus::Idle,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("participant_status_changed"));
+        assert!(json.contains("idle"));
+    }
+
+    #[test]
+    fn test_server_message_presence() {
+        let journal_id = Uuid::new_v4();
+        let msg = ServerMessage::Presence {
+            journal_id,
+            participants: vec![],
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("presence"));
+        assert!(json.contains("participants"));
+    }
+
+    #[test]
+    fn test_server_message_crdt_update() {
+        let journal_id = Uuid::new_v4();
+        let source = Uuid::new_v4();
+        let msg = ServerMessage::CrdtUpdate {
+            journal_id,
+            source: Some(source),
+            update: "SGVsbG8=".to_string(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("crdt_update"));
+        assert!(json.contains("SGVsbG8="));
+    }
+
+    #[test]
+    fn test_server_message_sync_state() {
+        let journal_id = Uuid::new_v4();
+        let msg = ServerMessage::SyncState {
+            journal_id,
+            state: "AQAAAQ==".to_string(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("sync_state"));
+        assert!(json.contains("AQAAAQ=="));
+    }
+
+    #[test]
+    fn test_base64_encode_decode_roundtrip() {
+        let original = b"Hello, CRDT World!";
+        let encoded = base64_encode(original);
+        let decoded = base64_decode(&encoded).unwrap();
+        assert_eq!(decoded, original);
+    }
+
+    #[test]
+    fn test_base64_encode_empty() {
+        let encoded = base64_encode(&[]);
+        assert_eq!(encoded, "");
+    }
+
+    #[test]
+    fn test_base64_decode_empty() {
+        let decoded = base64_decode("").unwrap();
+        assert!(decoded.is_empty());
+    }
+
+    #[test]
+    fn test_base64_decode_invalid() {
+        let result = base64_decode("!!invalid!!");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_base64_encode_various_lengths() {
+        // Test padding cases
+        assert_eq!(base64_encode(b"a"), "YQ==");
+        assert_eq!(base64_encode(b"ab"), "YWI=");
+        assert_eq!(base64_encode(b"abc"), "YWJj");
+        assert_eq!(base64_encode(b"abcd"), "YWJjZA==");
     }
 }
