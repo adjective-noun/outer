@@ -365,6 +365,14 @@ Do NOT use `git branch -r | grep polecat` or `git ls-remote | grep polecat` to c
 - All code must be formatted with `cargo fmt`
 - Tests must pass: `cargo test`
 
+### Integration Testing with OpenCode
+- **Tests must run against real OpenCode** - not divergent mocks
+- Mock servers for unit tests are acceptable, BUT:
+- Mocks must be validated by also running against real OpenCode
+- Use `OPENCODE_URL` env var to switch between mock and real
+- Integration test suite: `cargo test --features integration` (requires live OpenCode)
+- CI should run both unit tests (mocked) and integration tests (real OpenCode)
+
 ---
 
 Rig: outer
