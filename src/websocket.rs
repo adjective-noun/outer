@@ -14,6 +14,9 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 
 use crate::crdt::{Participant, ParticipantKind, ParticipantStatus, RoomEvent};
+use crate::delegation::{Capability, WorkItemStatus};
+use crate::delegation::work_item::WorkPriority;
+use crate::delegation::capability::CapabilitySet;
 use crate::error;
 use crate::models::{BlockStatus, BlockType};
 use crate::opencode::{OpenCodeClient, SendMessageRequest, StreamEvent};
@@ -27,16 +30,20 @@ pub async fn handler(
     ws.on_upgrade(move |socket| handle_socket(socket, state))
 }
 
-/// Connection state for tracking subscriptions
+/// Connection state for tracking subscriptions and delegation
 struct ConnectionState {
-    /// Map of journal_id -> participant_id for this connection
+    /// Map of journal_id -> participant_id for this connection (CRDT presence)
     subscriptions: std::collections::HashMap<Uuid, Uuid>,
+    /// The registered participant ID for delegation (per journal)
+    /// Map of journal_id -> registered_participant_id
+    delegation_registrations: std::collections::HashMap<Uuid, Uuid>,
 }
 
 impl ConnectionState {
     fn new() -> Self {
         Self {
             subscriptions: std::collections::HashMap::new(),
+            delegation_registrations: std::collections::HashMap::new(),
         }
     }
 }
@@ -362,15 +369,513 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     }
                 }
             }
+            // --- Delegation handlers ---
+            ClientMessage::RegisterParticipant {
+                journal_id,
+                name,
+                kind,
+                capabilities,
+            } => {
+                let participant_kind = kind
+                    .as_deref()
+                    .and_then(|k| k.parse().ok())
+                    .unwrap_or(ParticipantKind::User);
+
+                let participant = Participant::new(&name, participant_kind);
+
+                let registered = if let Some(caps) = capabilities {
+                    let cap_set: CapabilitySet = caps
+                        .iter()
+                        .filter_map(|s| s.parse::<Capability>().ok())
+                        .collect::<Vec<_>>()
+                        .into();
+                    state
+                        .delegation_manager
+                        .register_participant_with_capabilities(participant, cap_set)
+                        .await
+                } else {
+                    state.delegation_manager.register_participant(participant).await
+                };
+
+                // Store registration
+                {
+                    let mut conn = conn_state.lock().await;
+                    conn.delegation_registrations.insert(journal_id, registered.id());
+                }
+
+                let msg = ServerMessage::ParticipantRegistered {
+                    participant_id: registered.id(),
+                    name: registered.name().to_string(),
+                    kind: registered.kind().as_str().to_string(),
+                    capabilities: registered.capabilities.to_vec().iter().map(|c| c.as_str().to_string()).collect(),
+                };
+                let mut sender = sender.lock().await;
+                let _ = sender
+                    .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                    .await;
+            }
+            ClientMessage::Delegate {
+                journal_id,
+                description,
+                assignee_id,
+                block_id: _,
+                priority,
+                requires_approval,
+                approver_id,
+            } => {
+                let conn = conn_state.lock().await;
+                let delegator_id = match conn.delegation_registrations.get(&journal_id) {
+                    Some(&id) => id,
+                    None => {
+                        let error = ServerMessage::Error {
+                            message: "Not registered with delegation system".to_string(),
+                        };
+                        let mut sender = sender.lock().await;
+                        let _ = sender
+                            .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                            .await;
+                        continue;
+                    }
+                };
+                drop(conn);
+
+                let priority = priority
+                    .as_deref()
+                    .and_then(|p| p.parse::<WorkPriority>().ok());
+
+                match state
+                    .delegation_manager
+                    .delegate(
+                        journal_id,
+                        description,
+                        delegator_id,
+                        assignee_id,
+                        priority,
+                        requires_approval,
+                        approver_id,
+                    )
+                    .await
+                {
+                    Ok(work_item) => {
+                        let msg = ServerMessage::WorkDelegated { work_item };
+                        let mut sender = sender.lock().await;
+                        let _ = sender
+                            .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                            .await;
+                    }
+                    Err(e) => {
+                        let error = ServerMessage::Error {
+                            message: e.to_string(),
+                        };
+                        let mut sender = sender.lock().await;
+                        let _ = sender
+                            .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                            .await;
+                    }
+                }
+            }
+            ClientMessage::AcceptWork { work_item_id } => {
+                let conn = conn_state.lock().await;
+                // Find the participant ID (from any journal registration)
+                let participant_id = conn.delegation_registrations.values().next().copied();
+                drop(conn);
+
+                let participant_id = match participant_id {
+                    Some(id) => id,
+                    None => {
+                        let error = ServerMessage::Error {
+                            message: "Not registered with delegation system".to_string(),
+                        };
+                        let mut sender = sender.lock().await;
+                        let _ = sender
+                            .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                            .await;
+                        continue;
+                    }
+                };
+
+                match state.delegation_manager.accept_work(work_item_id, participant_id).await {
+                    Ok(_) => {
+                        let msg = ServerMessage::WorkAccepted {
+                            work_item_id,
+                            assignee_id: participant_id,
+                        };
+                        let mut sender = sender.lock().await;
+                        let _ = sender
+                            .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                            .await;
+                    }
+                    Err(e) => {
+                        let error = ServerMessage::Error {
+                            message: e.to_string(),
+                        };
+                        let mut sender = sender.lock().await;
+                        let _ = sender
+                            .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                            .await;
+                    }
+                }
+            }
+            ClientMessage::DeclineWork { work_item_id } => {
+                let conn = conn_state.lock().await;
+                let participant_id = conn.delegation_registrations.values().next().copied();
+                drop(conn);
+
+                let participant_id = match participant_id {
+                    Some(id) => id,
+                    None => {
+                        let error = ServerMessage::Error {
+                            message: "Not registered with delegation system".to_string(),
+                        };
+                        let mut sender = sender.lock().await;
+                        let _ = sender
+                            .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                            .await;
+                        continue;
+                    }
+                };
+
+                match state.delegation_manager.decline_work(work_item_id, participant_id).await {
+                    Ok(_) => {
+                        let msg = ServerMessage::WorkDeclined {
+                            work_item_id,
+                            assignee_id: participant_id,
+                        };
+                        let mut sender = sender.lock().await;
+                        let _ = sender
+                            .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                            .await;
+                    }
+                    Err(e) => {
+                        let error = ServerMessage::Error {
+                            message: e.to_string(),
+                        };
+                        let mut sender = sender.lock().await;
+                        let _ = sender
+                            .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                            .await;
+                    }
+                }
+            }
+            ClientMessage::SubmitWork { work_item_id, result } => {
+                let conn = conn_state.lock().await;
+                let participant_id = conn.delegation_registrations.values().next().copied();
+                drop(conn);
+
+                let participant_id = match participant_id {
+                    Some(id) => id,
+                    None => {
+                        let error = ServerMessage::Error {
+                            message: "Not registered with delegation system".to_string(),
+                        };
+                        let mut sender = sender.lock().await;
+                        let _ = sender
+                            .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                            .await;
+                        continue;
+                    }
+                };
+
+                match state.delegation_manager.submit_work(work_item_id, participant_id, result).await {
+                    Ok(work_item) => {
+                        if work_item.status == WorkItemStatus::AwaitingApproval {
+                            // Get the approval request
+                            let approvals = state.delegation_manager.get_approval_queue(work_item.get_approver_id()).await;
+                            if let Some(approval) = approvals.iter().find(|a| a.work_item_id == work_item_id) {
+                                let msg = ServerMessage::ApprovalRequested {
+                                    approval: approval.clone(),
+                                    work_item: work_item.clone(),
+                                };
+                                let mut sender = sender.lock().await;
+                                let _ = sender
+                                    .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                                    .await;
+                            }
+                        } else {
+                            let msg = ServerMessage::WorkApproved {
+                                work_item_id,
+                                approver_id: work_item.delegator_id,
+                                feedback: None,
+                            };
+                            let mut sender = sender.lock().await;
+                            let _ = sender
+                                .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                                .await;
+                        }
+                    }
+                    Err(e) => {
+                        let error = ServerMessage::Error {
+                            message: e.to_string(),
+                        };
+                        let mut sender = sender.lock().await;
+                        let _ = sender
+                            .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                            .await;
+                    }
+                }
+            }
+            ClientMessage::ApproveWork { approval_id, feedback } => {
+                let conn = conn_state.lock().await;
+                let participant_id = conn.delegation_registrations.values().next().copied();
+                drop(conn);
+
+                let participant_id = match participant_id {
+                    Some(id) => id,
+                    None => {
+                        let error = ServerMessage::Error {
+                            message: "Not registered with delegation system".to_string(),
+                        };
+                        let mut sender = sender.lock().await;
+                        let _ = sender
+                            .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                            .await;
+                        continue;
+                    }
+                };
+
+                match state.delegation_manager.approve(approval_id, participant_id, feedback.clone()).await {
+                    Ok((_, work_item)) => {
+                        let msg = ServerMessage::WorkApproved {
+                            work_item_id: work_item.id,
+                            approver_id: participant_id,
+                            feedback,
+                        };
+                        let mut sender = sender.lock().await;
+                        let _ = sender
+                            .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                            .await;
+                    }
+                    Err(e) => {
+                        let error = ServerMessage::Error {
+                            message: e.to_string(),
+                        };
+                        let mut sender = sender.lock().await;
+                        let _ = sender
+                            .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                            .await;
+                    }
+                }
+            }
+            ClientMessage::RejectWork { approval_id, feedback } => {
+                let conn = conn_state.lock().await;
+                let participant_id = conn.delegation_registrations.values().next().copied();
+                drop(conn);
+
+                let participant_id = match participant_id {
+                    Some(id) => id,
+                    None => {
+                        let error = ServerMessage::Error {
+                            message: "Not registered with delegation system".to_string(),
+                        };
+                        let mut sender = sender.lock().await;
+                        let _ = sender
+                            .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                            .await;
+                        continue;
+                    }
+                };
+
+                match state.delegation_manager.reject(approval_id, participant_id, &feedback).await {
+                    Ok((_, work_item)) => {
+                        let msg = ServerMessage::WorkRejected {
+                            work_item_id: work_item.id,
+                            approver_id: participant_id,
+                            feedback,
+                        };
+                        let mut sender = sender.lock().await;
+                        let _ = sender
+                            .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                            .await;
+                    }
+                    Err(e) => {
+                        let error = ServerMessage::Error {
+                            message: e.to_string(),
+                        };
+                        let mut sender = sender.lock().await;
+                        let _ = sender
+                            .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                            .await;
+                    }
+                }
+            }
+            ClientMessage::CancelWork { work_item_id } => {
+                let conn = conn_state.lock().await;
+                let participant_id = conn.delegation_registrations.values().next().copied();
+                drop(conn);
+
+                let participant_id = match participant_id {
+                    Some(id) => id,
+                    None => {
+                        let error = ServerMessage::Error {
+                            message: "Not registered with delegation system".to_string(),
+                        };
+                        let mut sender = sender.lock().await;
+                        let _ = sender
+                            .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                            .await;
+                        continue;
+                    }
+                };
+
+                match state.delegation_manager.cancel_work(work_item_id, participant_id).await {
+                    Ok(_) => {
+                        let msg = ServerMessage::WorkCancelled {
+                            work_item_id,
+                            cancelled_by: participant_id,
+                        };
+                        let mut sender = sender.lock().await;
+                        let _ = sender
+                            .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                            .await;
+                    }
+                    Err(e) => {
+                        let error = ServerMessage::Error {
+                            message: e.to_string(),
+                        };
+                        let mut sender = sender.lock().await;
+                        let _ = sender
+                            .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                            .await;
+                    }
+                }
+            }
+            ClientMessage::ClaimWork { work_item_id } => {
+                let conn = conn_state.lock().await;
+                let participant_id = conn.delegation_registrations.values().next().copied();
+                drop(conn);
+
+                let participant_id = match participant_id {
+                    Some(id) => id,
+                    None => {
+                        let error = ServerMessage::Error {
+                            message: "Not registered with delegation system".to_string(),
+                        };
+                        let mut sender = sender.lock().await;
+                        let _ = sender
+                            .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                            .await;
+                        continue;
+                    }
+                };
+
+                match state.delegation_manager.claim_work(work_item_id, participant_id).await {
+                    Ok(_) => {
+                        let msg = ServerMessage::WorkClaimed {
+                            work_item_id,
+                            claimed_by: participant_id,
+                        };
+                        let mut sender = sender.lock().await;
+                        let _ = sender
+                            .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                            .await;
+                    }
+                    Err(e) => {
+                        let error = ServerMessage::Error {
+                            message: e.to_string(),
+                        };
+                        let mut sender = sender.lock().await;
+                        let _ = sender
+                            .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                            .await;
+                    }
+                }
+            }
+            ClientMessage::GetWorkQueue => {
+                let conn = conn_state.lock().await;
+                let participant_id = conn.delegation_registrations.values().next().copied();
+                drop(conn);
+
+                let items = if let Some(id) = participant_id {
+                    state.delegation_manager.get_work_queue(id).await
+                } else {
+                    vec![]
+                };
+
+                let msg = ServerMessage::WorkQueue { items };
+                let mut sender = sender.lock().await;
+                let _ = sender
+                    .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                    .await;
+            }
+            ClientMessage::GetApprovalQueue => {
+                let conn = conn_state.lock().await;
+                let participant_id = conn.delegation_registrations.values().next().copied();
+                drop(conn);
+
+                let items = if let Some(id) = participant_id {
+                    state.delegation_manager.get_approval_queue(id).await
+                } else {
+                    vec![]
+                };
+
+                let msg = ServerMessage::ApprovalQueue { items };
+                let mut sender = sender.lock().await;
+                let _ = sender
+                    .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                    .await;
+            }
+            ClientMessage::SetAcceptingWork { accepting } => {
+                let conn = conn_state.lock().await;
+                let participant_id = conn.delegation_registrations.values().next().copied();
+                drop(conn);
+
+                let participant_id = match participant_id {
+                    Some(id) => id,
+                    None => {
+                        let error = ServerMessage::Error {
+                            message: "Not registered with delegation system".to_string(),
+                        };
+                        let mut sender = sender.lock().await;
+                        let _ = sender
+                            .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                            .await;
+                        continue;
+                    }
+                };
+
+                match state.delegation_manager.set_accepting_work(participant_id, accepting).await {
+                    Ok(_) => {
+                        let msg = ServerMessage::AcceptingWorkChanged {
+                            participant_id,
+                            accepting,
+                        };
+                        let mut sender = sender.lock().await;
+                        let _ = sender
+                            .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                            .await;
+                    }
+                    Err(e) => {
+                        let error = ServerMessage::Error {
+                            message: e.to_string(),
+                        };
+                        let mut sender = sender.lock().await;
+                        let _ = sender
+                            .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                            .await;
+                    }
+                }
+            }
+            ClientMessage::GetParticipants { journal_id: _ } => {
+                let participants = state.delegation_manager.list_available_participants().await;
+                let msg = ServerMessage::AvailableParticipants { participants };
+                let mut sender = sender.lock().await;
+                let _ = sender
+                    .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                    .await;
+            }
         }
     }
 
-    // Cleanup: Leave all subscribed rooms
+    // Cleanup: Leave all subscribed rooms and unregister from delegation
     let conn = conn_state.lock().await;
     for (journal_id, participant_id) in conn.subscriptions.iter() {
         if let Some(room) = state.room_manager.get(*journal_id).await {
             room.leave(*participant_id).await;
         }
+    }
+    // Unregister from delegation system
+    for (_, participant_id) in conn.delegation_registrations.iter() {
+        state.delegation_manager.unregister_participant(*participant_id).await;
     }
 }
 
@@ -1038,6 +1543,62 @@ pub enum ClientMessage {
         /// Base64-encoded state vector (optional, for diff sync)
         state_vector: Option<String>,
     },
+    // --- Delegation messages ---
+    /// Register as a participant with the delegation system
+    RegisterParticipant {
+        journal_id: Uuid,
+        name: String,
+        #[serde(default)]
+        kind: Option<String>,
+        #[serde(default)]
+        capabilities: Option<Vec<String>>,
+    },
+    /// Delegate work to another participant
+    Delegate {
+        journal_id: Uuid,
+        description: String,
+        assignee_id: Uuid,
+        #[serde(default)]
+        block_id: Option<Uuid>,
+        #[serde(default)]
+        priority: Option<String>,
+        #[serde(default)]
+        requires_approval: bool,
+        #[serde(default)]
+        approver_id: Option<Uuid>,
+    },
+    /// Accept delegated work
+    AcceptWork { work_item_id: Uuid },
+    /// Decline delegated work
+    DeclineWork { work_item_id: Uuid },
+    /// Submit completed work (optionally for approval)
+    SubmitWork {
+        work_item_id: Uuid,
+        result: String,
+    },
+    /// Approve completed work
+    ApproveWork {
+        approval_id: Uuid,
+        #[serde(default)]
+        feedback: Option<String>,
+    },
+    /// Reject completed work
+    RejectWork {
+        approval_id: Uuid,
+        feedback: String,
+    },
+    /// Cancel delegated work (by delegator)
+    CancelWork { work_item_id: Uuid },
+    /// Claim unassigned work
+    ClaimWork { work_item_id: Uuid },
+    /// Get participant's work queue
+    GetWorkQueue,
+    /// Get participant's pending approvals
+    GetApprovalQueue,
+    /// Set whether accepting work
+    SetAcceptingWork { accepting: bool },
+    /// Get list of available participants for delegation
+    GetParticipants { journal_id: Uuid },
 }
 
 /// Messages from server to client
@@ -1122,6 +1683,72 @@ pub enum ServerMessage {
         journal_id: Uuid,
         /// Base64-encoded state data
         state: String,
+    },
+    // --- Delegation messages ---
+    /// Participant was registered with delegation system
+    ParticipantRegistered {
+        participant_id: Uuid,
+        name: String,
+        kind: String,
+        capabilities: Vec<String>,
+    },
+    /// Work was delegated
+    WorkDelegated {
+        work_item: crate::delegation::WorkItem,
+    },
+    /// Work was accepted
+    WorkAccepted {
+        work_item_id: Uuid,
+        assignee_id: Uuid,
+    },
+    /// Work was declined
+    WorkDeclined {
+        work_item_id: Uuid,
+        assignee_id: Uuid,
+    },
+    /// Approval was requested
+    ApprovalRequested {
+        approval: crate::delegation::ApprovalRequest,
+        work_item: crate::delegation::WorkItem,
+    },
+    /// Work was approved
+    WorkApproved {
+        work_item_id: Uuid,
+        approver_id: Uuid,
+        feedback: Option<String>,
+    },
+    /// Work was rejected
+    WorkRejected {
+        work_item_id: Uuid,
+        approver_id: Uuid,
+        feedback: String,
+    },
+    /// Work was cancelled
+    WorkCancelled {
+        work_item_id: Uuid,
+        cancelled_by: Uuid,
+    },
+    /// Work was claimed
+    WorkClaimed {
+        work_item_id: Uuid,
+        claimed_by: Uuid,
+    },
+    /// Work queue response
+    WorkQueue {
+        items: Vec<crate::delegation::WorkItem>,
+    },
+    /// Approval queue response
+    ApprovalQueue {
+        items: Vec<crate::delegation::ApprovalRequest>,
+    },
+    /// Available participants response
+    AvailableParticipants {
+        participants: Vec<crate::delegation::RegisteredParticipant>,
+    },
+    /// Accepting work status changed
+    AcceptingWorkChanged {
+        participant_id: Uuid,
+        accepting: bool,
     },
 }
 

@@ -1,6 +1,7 @@
 //! Outer.sh server - collaborative AI conversation interface
 
 pub mod crdt;
+pub mod delegation;
 pub mod error;
 pub mod models;
 pub mod opencode;
@@ -14,6 +15,7 @@ use std::sync::Arc;
 pub struct AppState {
     pub store: store::Store,
     pub room_manager: crdt::room::RoomManager,
+    pub delegation_manager: delegation::DelegationManager,
 }
 
 impl AppState {
@@ -21,6 +23,7 @@ impl AppState {
         Arc::new(Self {
             store: store::Store::new(pool),
             room_manager: crdt::room::RoomManager::new(),
+            delegation_manager: delegation::DelegationManager::new(),
         })
     }
 }
