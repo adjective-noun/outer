@@ -35,6 +35,8 @@ async fn setup_app() -> (Router, sqlx::SqlitePool) {
             block_type TEXT NOT NULL CHECK (block_type IN ('user', 'assistant')),
             content TEXT NOT NULL DEFAULT '',
             status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'streaming', 'complete', 'error')),
+            parent_id TEXT REFERENCES blocks(id),
+            forked_from_id TEXT REFERENCES blocks(id),
             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
