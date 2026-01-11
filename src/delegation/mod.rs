@@ -9,6 +9,6 @@ pub mod participant;
 pub mod work_item;
 
 pub use capability::Capability;
-pub use manager::{DelegationManager, DelegationEvent};
+pub use manager::{DelegationEvent, DelegationManager};
 pub use participant::RegisteredParticipant;
-pub use work_item::{WorkItem, WorkItemStatus, ApprovalRequest, ApprovalStatus};
+pub use work_item::{ApprovalRequest, ApprovalStatus, WorkItem, WorkItemStatus};

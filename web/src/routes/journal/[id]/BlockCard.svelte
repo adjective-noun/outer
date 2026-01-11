@@ -13,13 +13,13 @@
 
 	// Find author (for now, infer from block type)
 	$: author = isUser ? 'You' : 'Assistant';
-	$: authorKind = isUser ? 'user' : 'agent';
+	$: _authorKind = isUser ? 'user' : 'agent';
 
 	// Normalize whitespace: collapse multiple blank lines into one, trim trailing spaces
 	$: normalizedContent = block.content
-		.replace(/[ \t]+$/gm, '')           // Trim trailing spaces from each line
-		.replace(/\n{3,}/g, '\n\n')         // Collapse 3+ newlines to 2
-		.trim();                            // Trim start/end
+		.replace(/[ \t]+$/gm, '') // Trim trailing spaces from each line
+		.replace(/\n{3,}/g, '\n\n') // Collapse 3+ newlines to 2
+		.trim(); // Trim start/end
 
 	function handleFork() {
 		forkBlock(block.id);
@@ -34,7 +34,15 @@
 	}
 </script>
 
-<article class="block-card" class:user={isUser} class:assistant={!isUser} class:streaming={isStreaming} class:error={isError} class:forked={isForked} class:optimistic={isOptimistic}>
+<article
+	class="block-card"
+	class:user={isUser}
+	class:assistant={!isUser}
+	class:streaming={isStreaming}
+	class:error={isError}
+	class:forked={isForked}
+	class:optimistic={isOptimistic}
+>
 	<header class="block-header">
 		<div class="author" class:user={isUser} class:agent={!isUser}>
 			<span class="author-indicator" class:user={isUser} class:agent={!isUser}></span>
@@ -75,7 +83,9 @@
 				{#if isUser}
 					<button class="action-btn" on:click={handleFork} title="Fork from this point">
 						<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
-							<path d="M5 5.372v.878c0 .414.336.75.75.75h4.5a.75.75 0 0 0 .75-.75v-.878a2.25 2.25 0 1 1 1.5 0v.878a2.25 2.25 0 0 1-2.25 2.25h-1.5v2.128a2.251 2.251 0 1 1-1.5 0V8.5h-1.5A2.25 2.25 0 0 1 3.5 6.25v-.878a2.25 2.25 0 1 1 1.5 0ZM5 3.25a.75.75 0 1 0-1.5 0 .75.75 0 0 0 1.5 0Zm6.75.75a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5Zm-3 8.75a.75.75 0 1 0-1.5 0 .75.75 0 0 0 1.5 0Z"/>
+							<path
+								d="M5 5.372v.878c0 .414.336.75.75.75h4.5a.75.75 0 0 0 .75-.75v-.878a2.25 2.25 0 1 1 1.5 0v.878a2.25 2.25 0 0 1-2.25 2.25h-1.5v2.128a2.251 2.251 0 1 1-1.5 0V8.5h-1.5A2.25 2.25 0 0 1 3.5 6.25v-.878a2.25 2.25 0 1 1 1.5 0ZM5 3.25a.75.75 0 1 0-1.5 0 .75.75 0 0 0 1.5 0Zm6.75.75a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5Zm-3 8.75a.75.75 0 1 0-1.5 0 .75.75 0 0 0 1.5 0Z"
+							/>
 						</svg>
 						Fork
 					</button>
@@ -83,16 +93,16 @@
 				{#if !isUser}
 					<button class="action-btn" on:click={handleRerun} title="Re-run this response">
 						<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
-							<path d="M1.705 8.005a.75.75 0 0 1 .834.656 5.5 5.5 0 0 0 9.592 2.97l-1.204-1.204a.25.25 0 0 1 .177-.427h3.646a.25.25 0 0 1 .25.25v3.646a.25.25 0 0 1-.427.177l-1.38-1.38A7.002 7.002 0 0 1 1.05 8.84a.75.75 0 0 1 .656-.834ZM8 2.5a5.487 5.487 0 0 0-4.131 1.869l1.204 1.204A.25.25 0 0 1 4.896 6H1.25A.25.25 0 0 1 1 5.75V2.104a.25.25 0 0 1 .427-.177l1.38 1.38A7.002 7.002 0 0 1 14.95 7.16a.75.75 0 0 1-1.49.178A5.5 5.5 0 0 0 8 2.5Z"/>
+							<path
+								d="M1.705 8.005a.75.75 0 0 1 .834.656 5.5 5.5 0 0 0 9.592 2.97l-1.204-1.204a.25.25 0 0 1 .177-.427h3.646a.25.25 0 0 1 .25.25v3.646a.25.25 0 0 1-.427.177l-1.38-1.38A7.002 7.002 0 0 1 1.05 8.84a.75.75 0 0 1 .656-.834ZM8 2.5a5.487 5.487 0 0 0-4.131 1.869l1.204 1.204A.25.25 0 0 1 4.896 6H1.25A.25.25 0 0 1 1 5.75V2.104a.25.25 0 0 1 .427-.177l1.38 1.38A7.002 7.002 0 0 1 14.95 7.16a.75.75 0 0 1-1.49.178A5.5 5.5 0 0 0 8 2.5Z"
+							/>
 						</svg>
 						Re-run
 					</button>
 				{/if}
 			</div>
 		{:else if isStreaming}
-			<button class="action-btn cancel" on:click={handleCancel}>
-				Cancel
-			</button>
+			<button class="action-btn cancel" on:click={handleCancel}> Cancel </button>
 		{/if}
 	</footer>
 </article>
@@ -174,7 +184,8 @@
 	}
 
 	@keyframes syncPulse {
-		0%, 100% {
+		0%,
+		100% {
 			opacity: 0.7;
 		}
 		50% {
@@ -226,7 +237,9 @@
 	}
 
 	@keyframes pulse {
-		0%, 80%, 100% {
+		0%,
+		80%,
+		100% {
 			opacity: 0.3;
 			transform: scale(0.8);
 		}

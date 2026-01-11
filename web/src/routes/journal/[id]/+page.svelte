@@ -34,7 +34,7 @@
 	let userScrolledUp = false;
 	let previousBlockCount = 0;
 	let selectedBlockId: string | null = null;
-	let blockElements: Map<string, HTMLElement> = new Map();
+	let _blockElements: Map<string, HTMLElement> = new Map();
 
 	onMount(() => {
 		// Try to get stored name
@@ -104,7 +104,7 @@
 	}
 
 	// Count pending approvals
-	$: pendingApprovals = $approvalQueue.filter(a => a.status === 'pending').length;
+	$: pendingApprovals = $approvalQueue.filter((a) => a.status === 'pending').length;
 
 	// Navigate back to journals with proper cleanup
 	async function goToJournals() {
@@ -126,7 +126,7 @@
 		<h1>{$currentJournal?.title ?? 'Loading...'}</h1>
 		<div class="header-actions">
 			{#if pendingApprovals > 0}
-				<button class="approval-badge" on:click={() => showApprovals = !showApprovals}>
+				<button class="approval-badge" on:click={() => (showApprovals = !showApprovals)}>
 					{pendingApprovals} pending
 				</button>
 			{/if}
@@ -148,7 +148,11 @@
 					</div>
 				{:else}
 					{#each $blocks as block (block.id)}
-						<div data-block-id={block.id} class="block-wrapper" class:selected={selectedBlockId === block.id}>
+						<div
+							data-block-id={block.id}
+							class="block-wrapper"
+							class:selected={selectedBlockId === block.id}
+						>
 							<BlockCard {block} />
 						</div>
 					{/each}
@@ -161,7 +165,7 @@
 		<ApprovalPanel
 			approvals={$approvalQueue}
 			workItems={$workQueue}
-			on:close={() => showApprovals = false}
+			on:close={() => (showApprovals = false)}
 		/>
 	{/if}
 
@@ -179,7 +183,11 @@
 					}
 				}}
 			></textarea>
-			<button type="submit" class="primary" disabled={!$connected || submitting || !promptInput.trim()}>
+			<button
+				type="submit"
+				class="primary"
+				disabled={!$connected || submitting || !promptInput.trim()}
+			>
 				Send
 			</button>
 		</form>
@@ -255,7 +263,9 @@
 	}
 
 	.block-wrapper {
-		transition: transform 0.2s, box-shadow 0.2s;
+		transition:
+			transform 0.2s,
+			box-shadow 0.2s;
 	}
 
 	.block-wrapper.selected {

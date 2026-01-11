@@ -293,15 +293,18 @@ impl DelegationManager {
 
         participant.set_accepting_work(accepting);
 
-        let _ = self.event_tx.send(DelegationEvent::ParticipantStatusChanged {
-            participant_id,
-            accepting_work: accepting,
-        });
+        let _ = self
+            .event_tx
+            .send(DelegationEvent::ParticipantStatusChanged {
+                participant_id,
+                accepting_work: accepting,
+            });
 
         Ok(())
     }
 
     /// Delegate work to a participant
+    #[allow(clippy::too_many_arguments)]
     pub async fn delegate(
         &self,
         journal_id: Uuid,
@@ -389,7 +392,7 @@ impl DelegationManager {
         }
 
         item.accept()
-            .map_err(|e| DelegationError::InvalidStateTransition(e))?;
+            .map_err(DelegationError::InvalidStateTransition)?;
 
         let _ = self.event_tx.send(DelegationEvent::WorkAccepted {
             work_item_id,
@@ -418,7 +421,7 @@ impl DelegationManager {
             }
 
             item.decline()
-                .map_err(|e| DelegationError::InvalidStateTransition(e))?;
+                .map_err(DelegationError::InvalidStateTransition)?;
 
             item.clone()
         };
@@ -461,7 +464,7 @@ impl DelegationManager {
 
             let needs_approval = item.requires_approval;
             item.submit_for_approval(&result)
-                .map_err(|e| DelegationError::InvalidStateTransition(e))?;
+                .map_err(DelegationError::InvalidStateTransition)?;
 
             (item.clone(), needs_approval)
         };
@@ -543,7 +546,7 @@ impl DelegationManager {
 
             approval
                 .approve(feedback.clone())
-                .map_err(|e| DelegationError::InvalidStateTransition(e))?;
+                .map_err(DelegationError::InvalidStateTransition)?;
 
             approval.work_item_id
         };
@@ -620,7 +623,7 @@ impl DelegationManager {
 
             approval
                 .reject(&feedback)
-                .map_err(|e| DelegationError::InvalidStateTransition(e))?;
+                .map_err(DelegationError::InvalidStateTransition)?;
 
             (approval.work_item_id, approval.requester_id)
         };
@@ -685,7 +688,7 @@ impl DelegationManager {
             }
 
             item.cancel()
-                .map_err(|e| DelegationError::InvalidStateTransition(e))?;
+                .map_err(DelegationError::InvalidStateTransition)?;
 
             item.clone()
         };
@@ -837,8 +840,8 @@ impl Default for DelegationManager {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::work_item::ApprovalStatus;
+    use super::*;
 
     fn make_user() -> Participant {
         Participant::new("Alice", ParticipantKind::User)
@@ -917,7 +920,15 @@ mod tests {
         let agent = manager.register_participant(make_agent()).await;
 
         let work = manager
-            .delegate(Uuid::new_v4(), "Task", user.id(), agent.id(), None, false, None)
+            .delegate(
+                Uuid::new_v4(),
+                "Task",
+                user.id(),
+                agent.id(),
+                None,
+                false,
+                None,
+            )
             .await
             .unwrap();
 
@@ -933,7 +944,15 @@ mod tests {
         let agent = manager.register_participant(make_agent()).await;
 
         let work = manager
-            .delegate(Uuid::new_v4(), "Task", user.id(), agent.id(), None, false, None)
+            .delegate(
+                Uuid::new_v4(),
+                "Task",
+                user.id(),
+                agent.id(),
+                None,
+                false,
+                None,
+            )
             .await
             .unwrap();
 
@@ -953,7 +972,15 @@ mod tests {
         let agent = manager.register_participant(make_agent()).await;
 
         let work = manager
-            .delegate(Uuid::new_v4(), "Task", user.id(), agent.id(), None, false, None)
+            .delegate(
+                Uuid::new_v4(),
+                "Task",
+                user.id(),
+                agent.id(),
+                None,
+                false,
+                None,
+            )
             .await
             .unwrap();
 
@@ -977,7 +1004,15 @@ mod tests {
         let _ = rx.try_recv();
 
         let work = manager
-            .delegate(Uuid::new_v4(), "Task", user.id(), agent.id(), None, true, None)
+            .delegate(
+                Uuid::new_v4(),
+                "Task",
+                user.id(),
+                agent.id(),
+                None,
+                true,
+                None,
+            )
             .await
             .unwrap();
         let _ = rx.try_recv();
@@ -1019,12 +1054,23 @@ mod tests {
         let agent = manager.register_participant(make_agent()).await;
 
         let work = manager
-            .delegate(Uuid::new_v4(), "Task", user.id(), agent.id(), None, true, None)
+            .delegate(
+                Uuid::new_v4(),
+                "Task",
+                user.id(),
+                agent.id(),
+                None,
+                true,
+                None,
+            )
             .await
             .unwrap();
 
         manager.accept_work(work.id, agent.id()).await.unwrap();
-        manager.submit_work(work.id, agent.id(), "Done!").await.unwrap();
+        manager
+            .submit_work(work.id, agent.id(), "Done!")
+            .await
+            .unwrap();
 
         let approvals = manager.get_approval_queue(user.id()).await;
         let approval_id = approvals[0].id;
@@ -1046,12 +1092,23 @@ mod tests {
         let agent = manager.register_participant(make_agent()).await;
 
         let work = manager
-            .delegate(Uuid::new_v4(), "Task", user.id(), agent.id(), None, true, None)
+            .delegate(
+                Uuid::new_v4(),
+                "Task",
+                user.id(),
+                agent.id(),
+                None,
+                true,
+                None,
+            )
             .await
             .unwrap();
 
         manager.accept_work(work.id, agent.id()).await.unwrap();
-        manager.submit_work(work.id, agent.id(), "Done!").await.unwrap();
+        manager
+            .submit_work(work.id, agent.id(), "Done!")
+            .await
+            .unwrap();
 
         let approvals = manager.get_approval_queue(user.id()).await;
         let approval_id = approvals[0].id;
@@ -1077,7 +1134,15 @@ mod tests {
         let agent = manager.register_participant(make_agent()).await;
 
         let work = manager
-            .delegate(Uuid::new_v4(), "Task", user.id(), agent.id(), None, false, None)
+            .delegate(
+                Uuid::new_v4(),
+                "Task",
+                user.id(),
+                agent.id(),
+                None,
+                false,
+                None,
+            )
             .await
             .unwrap();
 
@@ -1097,7 +1162,15 @@ mod tests {
         let agent = manager.register_participant(make_agent()).await;
 
         let work = manager
-            .delegate(Uuid::new_v4(), "Task", user.id(), agent.id(), None, false, None)
+            .delegate(
+                Uuid::new_v4(),
+                "Task",
+                user.id(),
+                agent.id(),
+                None,
+                false,
+                None,
+            )
             .await
             .unwrap();
 
@@ -1110,12 +1183,24 @@ mod tests {
     async fn test_symmetric_delegation_human_to_human() {
         let manager = DelegationManager::new();
 
-        let alice = manager.register_participant(Participant::new("Alice", ParticipantKind::User)).await;
-        let bob = manager.register_participant(Participant::new("Bob", ParticipantKind::User)).await;
+        let alice = manager
+            .register_participant(Participant::new("Alice", ParticipantKind::User))
+            .await;
+        let bob = manager
+            .register_participant(Participant::new("Bob", ParticipantKind::User))
+            .await;
 
         // Human can delegate to human
         let work = manager
-            .delegate(Uuid::new_v4(), "Review PR", alice.id(), bob.id(), None, true, None)
+            .delegate(
+                Uuid::new_v4(),
+                "Review PR",
+                alice.id(),
+                bob.id(),
+                None,
+                true,
+                None,
+            )
             .await
             .unwrap();
 
@@ -1132,7 +1217,15 @@ mod tests {
 
         // Agent can delegate back to human
         let work = manager
-            .delegate(Uuid::new_v4(), "Need clarification", agent.id(), user.id(), None, false, None)
+            .delegate(
+                Uuid::new_v4(),
+                "Need clarification",
+                agent.id(),
+                user.id(),
+                None,
+                false,
+                None,
+            )
             .await
             .unwrap();
 
@@ -1144,12 +1237,24 @@ mod tests {
     async fn test_symmetric_delegation_agent_to_agent() {
         let manager = DelegationManager::new();
 
-        let agent1 = manager.register_participant(Participant::new("Bot1", ParticipantKind::Agent)).await;
-        let agent2 = manager.register_participant(Participant::new("Bot2", ParticipantKind::Agent)).await;
+        let agent1 = manager
+            .register_participant(Participant::new("Bot1", ParticipantKind::Agent))
+            .await;
+        let agent2 = manager
+            .register_participant(Participant::new("Bot2", ParticipantKind::Agent))
+            .await;
 
         // Agent can delegate to another agent
         let work = manager
-            .delegate(Uuid::new_v4(), "Subtask", agent1.id(), agent2.id(), None, false, None)
+            .delegate(
+                Uuid::new_v4(),
+                "Subtask",
+                agent1.id(),
+                agent2.id(),
+                None,
+                false,
+                None,
+            )
             .await
             .unwrap();
 
@@ -1161,11 +1266,21 @@ mod tests {
     async fn test_observer_cannot_delegate() {
         let manager = DelegationManager::new();
 
-        let observer = manager.register_participant(Participant::new("Watcher", ParticipantKind::Observer)).await;
+        let observer = manager
+            .register_participant(Participant::new("Watcher", ParticipantKind::Observer))
+            .await;
         let user = manager.register_participant(make_user()).await;
 
         let result = manager
-            .delegate(Uuid::new_v4(), "Task", observer.id(), user.id(), None, false, None)
+            .delegate(
+                Uuid::new_v4(),
+                "Task",
+                observer.id(),
+                user.id(),
+                None,
+                false,
+                None,
+            )
             .await;
 
         assert!(matches!(
@@ -1179,11 +1294,23 @@ mod tests {
         let manager = DelegationManager::new();
 
         let user = manager.register_participant(make_user()).await;
-        let agent1 = manager.register_participant(Participant::new("Bot1", ParticipantKind::Agent)).await;
-        let agent2 = manager.register_participant(Participant::new("Bot2", ParticipantKind::Agent)).await;
+        let agent1 = manager
+            .register_participant(Participant::new("Bot1", ParticipantKind::Agent))
+            .await;
+        let agent2 = manager
+            .register_participant(Participant::new("Bot2", ParticipantKind::Agent))
+            .await;
 
         let work = manager
-            .delegate(Uuid::new_v4(), "Task", user.id(), agent1.id(), None, false, None)
+            .delegate(
+                Uuid::new_v4(),
+                "Task",
+                user.id(),
+                agent1.id(),
+                None,
+                false,
+                None,
+            )
             .await
             .unwrap();
 
@@ -1210,7 +1337,15 @@ mod tests {
 
         // Now delegation should fail
         let result = manager
-            .delegate(Uuid::new_v4(), "Task", user.id(), agent.id(), None, false, None)
+            .delegate(
+                Uuid::new_v4(),
+                "Task",
+                user.id(),
+                agent.id(),
+                None,
+                false,
+                None,
+            )
             .await;
 
         assert!(matches!(result, Err(DelegationError::NotAcceptingWork(_))));
@@ -1222,7 +1357,9 @@ mod tests {
 
         let user = manager.register_participant(make_user()).await;
         let agent = manager.register_participant(make_agent()).await;
-        let observer = manager.register_participant(Participant::new("Watcher", ParticipantKind::Observer)).await;
+        let observer = manager
+            .register_participant(Participant::new("Watcher", ParticipantKind::Observer))
+            .await;
 
         // Disable agent
         manager.set_accepting_work(agent.id(), false).await.unwrap();
@@ -1277,15 +1414,39 @@ mod tests {
 
         // Create work items with different priorities
         let low = manager
-            .delegate(Uuid::new_v4(), "Low", user.id(), agent.id(), Some(WorkPriority::Low), false, None)
+            .delegate(
+                Uuid::new_v4(),
+                "Low",
+                user.id(),
+                agent.id(),
+                Some(WorkPriority::Low),
+                false,
+                None,
+            )
             .await
             .unwrap();
         let high = manager
-            .delegate(Uuid::new_v4(), "High", user.id(), agent.id(), Some(WorkPriority::High), false, None)
+            .delegate(
+                Uuid::new_v4(),
+                "High",
+                user.id(),
+                agent.id(),
+                Some(WorkPriority::High),
+                false,
+                None,
+            )
             .await
             .unwrap();
         let normal = manager
-            .delegate(Uuid::new_v4(), "Normal", user.id(), agent.id(), Some(WorkPriority::Normal), false, None)
+            .delegate(
+                Uuid::new_v4(),
+                "Normal",
+                user.id(),
+                agent.id(),
+                Some(WorkPriority::Normal),
+                false,
+                None,
+            )
             .await
             .unwrap();
 

@@ -49,9 +49,10 @@ impl OpenCodeClient {
             )));
         }
 
-        let text = response.text().await.map_err(|e| {
-            AppError::OpenCode(format!("Failed to read response: {}", e))
-        })?;
+        let text = response
+            .text()
+            .await
+            .map_err(|e| AppError::OpenCode(format!("Failed to read response: {}", e)))?;
 
         serde_json::from_str(&text).map_err(|e| {
             // Log the full response for debugging
@@ -68,8 +69,7 @@ impl OpenCodeClient {
             };
             AppError::OpenCode(format!(
                 "Invalid JSON from OpenCode: {}. Response: {}",
-                e,
-                preview
+                e, preview
             ))
         })
     }
@@ -116,13 +116,14 @@ impl OpenCodeClient {
 
         let prompt_response = self
             .client
-            .post(format!("{}/session/{}/prompt_async", self.base_url, session_id))
+            .post(format!(
+                "{}/session/{}/prompt_async",
+                self.base_url, session_id
+            ))
             .json(&prompt_body)
             .send()
             .await
-            .map_err(|e| {
-                AppError::OpenCode(format!("Failed to send prompt: {}", e))
-            })?;
+            .map_err(|e| AppError::OpenCode(format!("Failed to send prompt: {}", e)))?;
 
         // prompt_async returns 204 on success
         if !prompt_response.status().is_success() {
@@ -230,19 +231,22 @@ fn parse_sse_stream(
 }
 
 /// Parse an OpenCode event into our StreamEvent type
-pub(crate) fn parse_event(event_type: &str, data: &str, session_filter: Option<&str>) -> Result<Option<StreamEvent>> {
+pub(crate) fn parse_event(
+    event_type: &str,
+    data: &str,
+    session_filter: Option<&str>,
+) -> Result<Option<StreamEvent>> {
     // Parse the event JSON
     let event: serde_json::Value = serde_json::from_str(data).map_err(|e| {
-        tracing::error!(
-            "Failed to parse event as JSON: {}. Full data:\n{}",
-            e,
-            data
-        );
+        tracing::error!("Failed to parse event as JSON: {}. Full data:\n{}", e, data);
         AppError::OpenCode(format!("Failed to parse event: {}", e))
     })?;
 
     // Get the event type from the payload
-    let payload_type = event.get("type").and_then(|t| t.as_str()).unwrap_or(event_type);
+    let payload_type = event
+        .get("type")
+        .and_then(|t| t.as_str())
+        .unwrap_or(event_type);
     let properties = event.get("properties");
 
     // Filter by session ID if specified
@@ -287,9 +291,7 @@ pub(crate) fn parse_event(event_type: &str, data: &str, session_filter: Option<&
             }
             Ok(None)
         }
-        "session.idle" => {
-            Ok(Some(StreamEvent::Done))
-        }
+        "session.idle" => Ok(Some(StreamEvent::Done)),
         "session.error" => {
             if let Some(props) = properties {
                 let error_msg = if let Some(error) = props.get("error") {

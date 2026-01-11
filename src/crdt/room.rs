@@ -96,7 +96,9 @@ impl JournalRoom {
         participants.insert(participant.id, participant.clone());
 
         // Broadcast join event
-        let _ = self.event_tx.send(RoomEvent::ParticipantJoined(participant.clone()));
+        let _ = self
+            .event_tx
+            .send(RoomEvent::ParticipantJoined(participant.clone()));
 
         participant
     }
@@ -106,7 +108,9 @@ impl JournalRoom {
         let mut participants = self.participants.write().await;
         participants.insert(participant.id, participant.clone());
 
-        let _ = self.event_tx.send(RoomEvent::ParticipantJoined(participant.clone()));
+        let _ = self
+            .event_tx
+            .send(RoomEvent::ParticipantJoined(participant.clone()));
 
         participant
     }
@@ -117,7 +121,9 @@ impl JournalRoom {
         let removed = participants.remove(&participant_id);
 
         if removed.is_some() {
-            let _ = self.event_tx.send(RoomEvent::ParticipantLeft { participant_id });
+            let _ = self
+                .event_tx
+                .send(RoomEvent::ParticipantLeft { participant_id });
         }
 
         removed
@@ -171,7 +177,11 @@ impl JournalRoom {
     }
 
     /// Apply a CRDT update from a participant
-    pub async fn apply_update(&self, source: Option<Uuid>, update: &[u8]) -> Result<(), yrs::encoding::read::Error> {
+    pub async fn apply_update(
+        &self,
+        source: Option<Uuid>,
+        update: &[u8],
+    ) -> Result<(), yrs::encoding::read::Error> {
         self.doc.apply_update(update)?;
 
         // Broadcast to all other participants
@@ -204,10 +214,7 @@ impl JournalRoom {
 
         // Compute the update (diff from before)
         if let Ok(update) = self.doc.encode_diff(&before_sv) {
-            let _ = self.event_tx.send(RoomEvent::CrdtUpdate {
-                source,
-                update,
-            });
+            let _ = self.event_tx.send(RoomEvent::CrdtUpdate { source, update });
         }
     }
 
@@ -218,25 +225,30 @@ impl JournalRoom {
         self.doc.append_block_content(block_id, delta);
 
         if let Ok(update) = self.doc.encode_diff(&before_sv) {
-            let _ = self.event_tx.send(RoomEvent::CrdtUpdate {
-                source,
-                update,
-            });
+            let _ = self.event_tx.send(RoomEvent::CrdtUpdate { source, update });
         }
     }
 
     /// Mark stale participants as idle/disconnected
-    pub async fn cleanup_stale_participants(&self, idle_timeout: chrono::Duration, disconnect_timeout: chrono::Duration) {
+    pub async fn cleanup_stale_participants(
+        &self,
+        idle_timeout: chrono::Duration,
+        disconnect_timeout: chrono::Duration,
+    ) {
         let mut participants = self.participants.write().await;
 
         for participant in participants.values_mut() {
-            if participant.is_stale(disconnect_timeout) && participant.status != super::participant::ParticipantStatus::Disconnected {
+            if participant.is_stale(disconnect_timeout)
+                && participant.status != super::participant::ParticipantStatus::Disconnected
+            {
                 participant.mark_disconnected();
                 let _ = self.event_tx.send(RoomEvent::StatusChanged {
                     participant_id: participant.id,
                     status: participant.status,
                 });
-            } else if participant.is_stale(idle_timeout) && participant.status == super::participant::ParticipantStatus::Active {
+            } else if participant.is_stale(idle_timeout)
+                && participant.status == super::participant::ParticipantStatus::Active
+            {
                 participant.mark_idle();
                 let _ = self.event_tx.send(RoomEvent::StatusChanged {
                     participant_id: participant.id,
@@ -357,7 +369,9 @@ mod tests {
         let participant = room.join("Alice", ParticipantKind::User).await;
         let block_id = Uuid::new_v4();
 
-        let updated = room.update_cursor(participant.id, Some(block_id), Some(42)).await;
+        let updated = room
+            .update_cursor(participant.id, Some(block_id), Some(42))
+            .await;
         assert!(updated);
 
         let p = room.get_participant(participant.id).await.unwrap();
@@ -394,10 +408,16 @@ mod tests {
         let block_id = Uuid::new_v4();
 
         room.set_block_content(block_id, "Hello", None).await;
-        assert_eq!(room.doc().get_block_content(block_id), Some("Hello".to_string()));
+        assert_eq!(
+            room.doc().get_block_content(block_id),
+            Some("Hello".to_string())
+        );
 
         room.append_block_content(block_id, " World", None).await;
-        assert_eq!(room.doc().get_block_content(block_id), Some("Hello World".to_string()));
+        assert_eq!(
+            room.doc().get_block_content(block_id),
+            Some("Hello World".to_string())
+        );
     }
 
     #[tokio::test]
@@ -515,7 +535,10 @@ mod tests {
         let room = JournalRoom::with_doc(doc);
 
         assert_eq!(room.journal_id(), journal_id);
-        assert_eq!(room.doc().get_block_content(block_id), Some("Pre-existing content".to_string()));
+        assert_eq!(
+            room.doc().get_block_content(block_id),
+            Some("Pre-existing content".to_string())
+        );
     }
 
     #[tokio::test]
@@ -524,12 +547,17 @@ mod tests {
         let room2 = JournalRoom::new(Uuid::new_v4());
         let block_id = Uuid::new_v4();
 
-        room1.set_block_content(block_id, "Shared content", None).await;
+        room1
+            .set_block_content(block_id, "Shared content", None)
+            .await;
         let update = room1.doc().encode_state();
 
         room2.apply_update(None, &update).await.unwrap();
 
-        assert_eq!(room2.doc().get_block_content(block_id), Some("Shared content".to_string()));
+        assert_eq!(
+            room2.doc().get_block_content(block_id),
+            Some("Shared content".to_string())
+        );
     }
 
     #[tokio::test]
@@ -565,11 +593,16 @@ mod tests {
         let _ = receiver.try_recv();
 
         let block_id = Uuid::new_v4();
-        room.update_cursor(participant.id, Some(block_id), Some(10)).await;
+        room.update_cursor(participant.id, Some(block_id), Some(10))
+            .await;
 
         let event = receiver.try_recv().unwrap();
         match event {
-            RoomEvent::CursorMoved { participant_id, block_id: bid, offset } => {
+            RoomEvent::CursorMoved {
+                participant_id,
+                block_id: bid,
+                offset,
+            } => {
                 assert_eq!(participant_id, participant.id);
                 assert_eq!(bid, Some(block_id));
                 assert_eq!(offset, Some(10));

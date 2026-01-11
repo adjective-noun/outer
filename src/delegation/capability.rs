@@ -177,8 +177,14 @@ mod tests {
         assert_eq!("read".parse::<Capability>().unwrap(), Capability::Read);
         assert_eq!("submit".parse::<Capability>().unwrap(), Capability::Submit);
         assert_eq!("fork".parse::<Capability>().unwrap(), Capability::Fork);
-        assert_eq!("delegate".parse::<Capability>().unwrap(), Capability::Delegate);
-        assert_eq!("approve".parse::<Capability>().unwrap(), Capability::Approve);
+        assert_eq!(
+            "delegate".parse::<Capability>().unwrap(),
+            Capability::Delegate
+        );
+        assert_eq!(
+            "approve".parse::<Capability>().unwrap(),
+            Capability::Approve
+        );
         assert_eq!("admin".parse::<Capability>().unwrap(), Capability::Admin);
     }
 

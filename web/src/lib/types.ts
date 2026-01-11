@@ -36,7 +36,14 @@ export interface WorkItem {
 	description: string;
 	delegator_id: string;
 	assignee_id?: string;
-	status: 'pending' | 'assigned' | 'in_progress' | 'awaiting_approval' | 'completed' | 'rejected' | 'cancelled';
+	status:
+		| 'pending'
+		| 'assigned'
+		| 'in_progress'
+		| 'awaiting_approval'
+		| 'completed'
+		| 'rejected'
+		| 'cancelled';
 	priority: 'low' | 'normal' | 'high' | 'urgent';
 	result?: string;
 	created_at: string;
@@ -67,8 +74,23 @@ export type ClientMessage =
 	| { type: 'get_presence'; journal_id: string }
 	| { type: 'crdt_update'; journal_id: string; update: string }
 	| { type: 'sync_request'; journal_id: string; state_vector?: string }
-	| { type: 'register_participant'; journal_id: string; name: string; kind?: string; capabilities?: string[] }
-	| { type: 'delegate'; journal_id: string; description: string; assignee_id: string; block_id?: string; priority?: string; requires_approval?: boolean; approver_id?: string }
+	| {
+			type: 'register_participant';
+			journal_id: string;
+			name: string;
+			kind?: string;
+			capabilities?: string[];
+	  }
+	| {
+			type: 'delegate';
+			journal_id: string;
+			description: string;
+			assignee_id: string;
+			block_id?: string;
+			priority?: string;
+			requires_approval?: boolean;
+			approver_id?: string;
+	  }
 	| { type: 'accept_work'; work_item_id: string }
 	| { type: 'decline_work'; work_item_id: string }
 	| { type: 'submit_work'; work_item_id: string; result: string }
@@ -92,16 +114,38 @@ export type ServerMessage =
 	| { type: 'block_forked'; original_block_id: string; new_block: Block }
 	| { type: 'block_cancelled'; block_id: string }
 	| { type: 'error'; message: string; details?: string }
-	| { type: 'subscribed'; journal_id: string; participant: Participant; participants: Participant[] }
+	| {
+			type: 'subscribed';
+			journal_id: string;
+			participant: Participant;
+			participants: Participant[];
+	  }
 	| { type: 'unsubscribed'; journal_id: string }
 	| { type: 'participant_joined'; journal_id: string; participant: Participant }
 	| { type: 'participant_left'; journal_id: string; participant_id: string }
-	| { type: 'cursor_moved'; journal_id: string; participant_id: string; block_id?: string; offset?: number }
-	| { type: 'participant_status_changed'; journal_id: string; participant_id: string; status: Participant['status'] }
+	| {
+			type: 'cursor_moved';
+			journal_id: string;
+			participant_id: string;
+			block_id?: string;
+			offset?: number;
+	  }
+	| {
+			type: 'participant_status_changed';
+			journal_id: string;
+			participant_id: string;
+			status: Participant['status'];
+	  }
 	| { type: 'presence'; journal_id: string; participants: Participant[] }
 	| { type: 'crdt_update'; journal_id: string; source?: string; update: string }
 	| { type: 'sync_state'; journal_id: string; state: string }
-	| { type: 'participant_registered'; participant_id: string; name: string; kind: string; capabilities: string[] }
+	| {
+			type: 'participant_registered';
+			participant_id: string;
+			name: string;
+			kind: string;
+			capabilities: string[];
+	  }
 	| { type: 'work_delegated'; work_item: WorkItem }
 	| { type: 'work_accepted'; work_item_id: string; assignee_id: string }
 	| { type: 'work_declined'; work_item_id: string; assignee_id: string }
@@ -112,5 +156,8 @@ export type ServerMessage =
 	| { type: 'work_claimed'; work_item_id: string; claimed_by: string }
 	| { type: 'work_queue'; items: WorkItem[] }
 	| { type: 'approval_queue'; items: ApprovalRequest[] }
-	| { type: 'available_participants'; participants: Array<{ id: string; name: string; kind: string; capabilities: string[] }> }
+	| {
+			type: 'available_participants';
+			participants: Array<{ id: string; name: string; kind: string; capabilities: string[] }>;
+	  }
 	| { type: 'accepting_work_changed'; participant_id: string; accepting: boolean };

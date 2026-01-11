@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, onDestroy, createEventDispatcher } from 'svelte';
+	import { onMount, createEventDispatcher } from 'svelte';
 	import * as d3 from 'd3';
 	import type { Block } from '$lib/types';
 
@@ -42,7 +42,7 @@
 		// Track which blocks are forks and their fork positions
 		const forkMap = new Map<string, string[]>(); // original_id -> [forked_ids]
 
-		blocks.forEach(block => {
+		blocks.forEach((block) => {
 			if (block.forked_from_id) {
 				const forks = forkMap.get(block.forked_from_id) || [];
 				forks.push(block.id);
@@ -57,12 +57,15 @@
 		let maxBranch = 0;
 
 		// Find root blocks (no parent_id and not forked)
-		const roots = blocks.filter(b => !b.parent_id && !b.forked_from_id);
+		const roots = blocks.filter((b) => !b.parent_id && !b.forked_from_id);
 
 		// BFS to assign levels
 		function assignLevels(startBlocks: Block[], startLevel: number, branch: number) {
-			const queue: { block: Block; level: number; branch: number }[] =
-				startBlocks.map(b => ({ block: b, level: startLevel, branch }));
+			const queue: { block: Block; level: number; branch: number }[] = startBlocks.map((b) => ({
+				block: b,
+				level: startLevel,
+				branch
+			}));
 
 			while (queue.length > 0) {
 				const { block, level, branch: currentBranch } = queue.shift()!;
@@ -73,15 +76,15 @@
 				branchMap.set(block.id, currentBranch);
 
 				// Find children (blocks with this as parent)
-				const children = blocks.filter(b => b.parent_id === block.id && !b.forked_from_id);
-				children.forEach(child => {
+				const children = blocks.filter((b) => b.parent_id === block.id && !b.forked_from_id);
+				children.forEach((child) => {
 					queue.push({ block: child, level: level + 1, branch: currentBranch });
 				});
 
 				// Handle forks: they branch off at the same level as their successor
 				const forks = forkMap.get(block.id) || [];
-				forks.forEach((forkId, forkIndex) => {
-					const forkedBlock = blocks.find(b => b.id === forkId);
+				forks.forEach((forkId, _forkIndex) => {
+					const forkedBlock = blocks.find((b) => b.id === forkId);
 					if (forkedBlock) {
 						maxBranch++;
 						// Fork appears at level + 1 (same as where the next message would be)
@@ -95,7 +98,7 @@
 		assignLevels(roots, 0, 0);
 
 		// Handle any orphaned blocks (shouldn't happen but safety)
-		blocks.forEach(block => {
+		blocks.forEach((block) => {
 			if (!levelMap.has(block.id)) {
 				levelMap.set(block.id, 0);
 				branchMap.set(block.id, 0);
@@ -103,7 +106,7 @@
 		});
 
 		// Create nodes
-		blocks.forEach(block => {
+		blocks.forEach((block) => {
 			const level = levelMap.get(block.id) || 0;
 			const branch = branchMap.get(block.id) || 0;
 
@@ -118,7 +121,7 @@
 		});
 
 		// Create edges
-		blocks.forEach(block => {
+		blocks.forEach((block) => {
 			const targetNode = nodeMap.get(block.id);
 			if (!targetNode) return;
 
@@ -148,14 +151,12 @@
 		const { nodes, edges } = buildGraph(blocks);
 
 		// Calculate SVG dimensions
-		const maxLevel = Math.max(0, ...nodes.map(n => n.level));
-		const maxBranch = Math.max(0, ...nodes.map(n => n.branch));
+		const maxLevel = Math.max(0, ...nodes.map((n) => n.level));
+		const maxBranch = Math.max(0, ...nodes.map((n) => n.branch));
 		const svgWidth = Math.max(80, 60 + maxBranch * branchWidth);
 		const svgHeight = Math.max(60, 40 + (maxLevel + 1) * levelHeight);
 
-		const svg = d3.select(svgElement)
-			.attr('width', svgWidth)
-			.attr('height', svgHeight);
+		const svg = d3.select(svgElement).attr('width', svgWidth).attr('height', svgHeight);
 
 		// Clear previous content
 		svg.selectAll('*').remove();
@@ -164,7 +165,8 @@
 		const defs = svg.append('defs');
 
 		// Arrow marker for parent edges
-		defs.append('marker')
+		defs
+			.append('marker')
 			.attr('id', 'arrow-parent')
 			.attr('viewBox', '0 -5 10 10')
 			.attr('refX', 15)
@@ -177,7 +179,8 @@
 			.attr('fill', 'var(--color-text-muted)');
 
 		// Arrow marker for fork edges
-		defs.append('marker')
+		defs
+			.append('marker')
 			.attr('id', 'arrow-fork')
 			.attr('viewBox', '0 -5 10 10')
 			.attr('refX', 15)
@@ -192,11 +195,12 @@
 		// Draw edges
 		const edgeGroup = svg.append('g').attr('class', 'edges');
 
-		edges.forEach(edge => {
+		edges.forEach((edge) => {
 			const isFork = edge.type === 'fork';
 
 			// Create path with curve for forks
-			const path = edgeGroup.append('path')
+			edgeGroup
+				.append('path')
 				.attr('d', () => {
 					if (isFork || edge.source.branch !== edge.target.branch) {
 						// Curved path for forks or cross-branch connections
@@ -219,14 +223,15 @@
 		// Draw nodes
 		const nodeGroup = svg.append('g').attr('class', 'nodes');
 
-		nodes.forEach(node => {
+		nodes.forEach((node) => {
 			const isUser = node.block.block_type === 'user';
 			const isSelected = node.block.id === selectedBlockId;
 			const isStreaming = node.block.status === 'streaming';
 			const isError = node.block.status === 'error';
 			const isForked = !!node.block.forked_from_id;
 
-			const g = nodeGroup.append('g')
+			const g = nodeGroup
+				.append('g')
 				.attr('transform', `translate(${node.x}, ${node.y})`)
 				.attr('cursor', 'pointer')
 				.on('click', () => {
@@ -241,8 +246,11 @@
 					if (isStreaming) return 'var(--color-primary)';
 					return isUser ? 'var(--color-user)' : 'var(--color-assistant)';
 				})
-				.attr('stroke', isSelected ? 'var(--color-text-bright)' : (isForked ? 'var(--color-warning)' : 'none'))
-				.attr('stroke-width', isSelected ? 3 : (isForked ? 2 : 0));
+				.attr(
+					'stroke',
+					isSelected ? 'var(--color-text-bright)' : isForked ? 'var(--color-warning)' : 'none'
+				)
+				.attr('stroke-width', isSelected ? 3 : isForked ? 2 : 0);
 
 			// Streaming animation
 			if (isStreaming) {
@@ -273,13 +281,13 @@
 			}
 
 			// Tooltip on hover
-			g.append('title')
-				.text(() => {
-					const type = isUser ? 'User' : 'Assistant';
-					const status = node.block.status;
-					const preview = node.block.content.slice(0, 50) + (node.block.content.length > 50 ? '...' : '');
-					return `${type} (${status})\n${preview}`;
-				});
+			g.append('title').text(() => {
+				const type = isUser ? 'User' : 'Assistant';
+				const status = node.block.status;
+				const preview =
+					node.block.content.slice(0, 50) + (node.block.content.length > 50 ? '...' : '');
+				return `${type} (${status})\n${preview}`;
+			});
 		});
 	}
 

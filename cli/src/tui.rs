@@ -225,9 +225,9 @@ fn draw_ui(f: &mut Frame, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(10),     // Conversation
-            Constraint::Length(3),   // Input
-            Constraint::Length(1),   // Status bar
+            Constraint::Min(10),   // Conversation
+            Constraint::Length(3), // Input
+            Constraint::Length(1), // Status bar
         ])
         .split(f.area());
 
@@ -246,14 +246,8 @@ fn draw_conversation(f: &mut Frame, app: &App, area: Rect) {
 
     for block in &app.blocks {
         let (prefix, style) = match block.block_type {
-            BlockType::User => (
-                "You: ",
-                Style::default().fg(Color::Cyan),
-            ),
-            BlockType::Assistant => (
-                "AI: ",
-                Style::default().fg(Color::Green),
-            ),
+            BlockType::User => ("You: ", Style::default().fg(Color::Cyan)),
+            BlockType::Assistant => ("AI: ", Style::default().fg(Color::Green)),
         };
 
         // Show status indicator for streaming blocks
@@ -286,13 +280,12 @@ fn draw_conversation(f: &mut Frame, app: &App, area: Rect) {
         items.push(ListItem::new(Line::from(""))); // Spacing
     }
 
-    let conversation = List::new(items)
-        .block(
-            Block::default()
-                .title(" Conversation ")
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::White)),
-        );
+    let conversation = List::new(items).block(
+        Block::default()
+            .title(" Conversation ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::White)),
+    );
 
     f.render_widget(conversation, area);
 }
@@ -349,11 +342,8 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
         if participant_count == 1 { "" } else { "s" }
     );
 
-    let status = Paragraph::new(status_text).style(
-        Style::default()
-            .fg(Color::White)
-            .bg(Color::DarkGray),
-    );
+    let status =
+        Paragraph::new(status_text).style(Style::default().fg(Color::White).bg(Color::DarkGray));
 
     f.render_widget(status, area);
 }

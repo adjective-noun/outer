@@ -1,5 +1,12 @@
 import { writable, derived, get } from 'svelte/store';
-import type { Journal, Block, Participant, WorkItem, ApprovalRequest, ServerMessage } from './types';
+import type {
+	Journal,
+	Block,
+	Participant,
+	WorkItem,
+	ApprovalRequest,
+	ServerMessage
+} from './types';
 import { getWebSocketClient } from './websocket';
 
 // Connection state
@@ -62,7 +69,7 @@ function reorderBlocksWithForks(blocks: Block[]): Block[] {
 
 	// Add any orphaned forks (parent not in current view) at the end
 	for (const [parentId, forks] of forkedByParent) {
-		if (!nonForked.some(b => b.id === parentId)) {
+		if (!nonForked.some((b) => b.id === parentId)) {
 			result.push(...forks);
 		}
 	}
@@ -80,7 +87,9 @@ export const myParticipantId = writable<string | null>(null);
 // Work items and approvals
 export const workQueue = writable<WorkItem[]>([]);
 export const approvalQueue = writable<ApprovalRequest[]>([]);
-export const availableParticipants = writable<Array<{ id: string; name: string; kind: string; capabilities: string[] }>>([]);
+export const availableParticipants = writable<
+	Array<{ id: string; name: string; kind: string; capabilities: string[] }>
+>([]);
 
 // Session ID for OpenCode
 export const sessionId = writable<string | null>(null);
@@ -141,13 +150,14 @@ export function initializeConnection(): Promise<void> {
 		const currentJournal = get(currentJournalId);
 		if (currentJournal && pending.length > 0) {
 			// Re-subscribe to the current journal
-			const storedName = typeof localStorage !== 'undefined'
-				? localStorage.getItem('outer_user_name') || 'User'
-				: 'User';
+			const storedName =
+				typeof localStorage !== 'undefined'
+					? localStorage.getItem('outer_user_name') || 'User'
+					: 'User';
 			ws.send({ type: 'subscribe', journal_id: currentJournal, name: storedName, kind: 'user' });
 
 			// Resend any pending messages for this journal
-			const journalPending = pending.filter(p => p.journalId === currentJournal);
+			const journalPending = pending.filter((p) => p.journalId === currentJournal);
 			for (const msg of journalPending) {
 				const sid = get(sessionId);
 				ws.send({
@@ -209,18 +219,16 @@ export function initializeConnection(): Promise<void> {
 				// Check if this is a user block that matches a pending message
 				if (message.block.block_type === 'user') {
 					const pending = get(pendingMessages);
-					const matchIdx = pending.findIndex(p =>
-						p.journalId === message.block.journal_id &&
-						p.content === message.block.content
+					const matchIdx = pending.findIndex(
+						(p) => p.journalId === message.block.journal_id && p.content === message.block.content
 					);
 					if (matchIdx >= 0) {
 						// Remove the pending message
-						pendingMessages.update(ps => ps.filter((_, i) => i !== matchIdx));
+						pendingMessages.update((ps) => ps.filter((_, i) => i !== matchIdx));
 						// Replace optimistic block with real one
 						blocks.update((bs) => {
-							const optimisticIdx = bs.findIndex(b =>
-								b.id.startsWith('pending-') &&
-								b.content === message.block.content
+							const optimisticIdx = bs.findIndex(
+								(b) => b.id.startsWith('pending-') && b.content === message.block.content
 							);
 							if (optimisticIdx >= 0) {
 								// Replace optimistic with real
@@ -273,7 +281,7 @@ export function initializeConnection(): Promise<void> {
 			case 'block_forked':
 				blocks.update((bs) => {
 					// Find the original block that was forked
-					const originalIdx = bs.findIndex(b => b.id === message.original_block_id);
+					const originalIdx = bs.findIndex((b) => b.id === message.original_block_id);
 					if (originalIdx >= 0) {
 						// Insert the forked block right after the original
 						const newBlocks = [...bs];
@@ -405,7 +413,11 @@ export function loadJournal(journalId: string) {
 	getWebSocketClient().send({ type: 'get_journal', journal_id: journalId });
 }
 
-export function subscribeToJournal(journalId: string, name: string, kind: 'user' | 'agent' = 'user') {
+export function subscribeToJournal(
+	journalId: string,
+	name: string,
+	kind: 'user' | 'agent' = 'user'
+) {
 	getWebSocketClient().send({ type: 'subscribe', journal_id: journalId, name, kind });
 }
 
@@ -424,7 +436,7 @@ export function submitPrompt(journalId: string, content: string) {
 		content,
 		timestamp: Date.now()
 	};
-	pendingMessages.update(ps => [...ps, pendingMsg]);
+	pendingMessages.update((ps) => [...ps, pendingMsg]);
 
 	// Add optimistic block immediately
 	const optimisticBlock: Block = {
@@ -436,7 +448,7 @@ export function submitPrompt(journalId: string, content: string) {
 		created_at: new Date().toISOString(),
 		updated_at: new Date().toISOString()
 	};
-	blocks.update(bs => [...bs, optimisticBlock]);
+	blocks.update((bs) => [...bs, optimisticBlock]);
 
 	// Send to server
 	getWebSocketClient().send({
@@ -474,7 +486,12 @@ export function updateCursor(journalId: string, blockId?: string, offset?: numbe
 }
 
 // Delegation actions
-export function registerAsParticipant(journalId: string, name: string, kind: 'user' | 'agent' = 'user', capabilities?: string[]) {
+export function registerAsParticipant(
+	journalId: string,
+	name: string,
+	kind: 'user' | 'agent' = 'user',
+	capabilities?: string[]
+) {
 	getWebSocketClient().send({
 		type: 'register_participant',
 		journal_id: journalId,
@@ -484,11 +501,16 @@ export function registerAsParticipant(journalId: string, name: string, kind: 'us
 	});
 }
 
-export function delegateWork(journalId: string, description: string, assigneeId: string, options?: {
-	priority?: string;
-	requiresApproval?: boolean;
-	approverId?: string;
-}) {
+export function delegateWork(
+	journalId: string,
+	description: string,
+	assigneeId: string,
+	options?: {
+		priority?: string;
+		requiresApproval?: boolean;
+		approverId?: string;
+	}
+) {
 	getWebSocketClient().send({
 		type: 'delegate',
 		journal_id: journalId,

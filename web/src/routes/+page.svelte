@@ -32,7 +32,11 @@
 					placeholder="New journal title..."
 					disabled={!$connected || creating}
 				/>
-				<button type="submit" class="primary" disabled={!$connected || creating || !newTitle.trim()}>
+				<button
+					type="submit"
+					class="primary"
+					disabled={!$connected || creating || !newTitle.trim()}
+				>
 					Create
 				</button>
 			</form>
@@ -130,7 +134,9 @@
 		background: var(--color-bg-secondary);
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-md);
-		transition: border-color 0.15s, background 0.15s;
+		transition:
+			border-color 0.15s,
+			background 0.15s;
 	}
 
 	.journal-card:hover {

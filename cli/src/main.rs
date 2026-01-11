@@ -93,9 +93,7 @@ async fn main() -> Result<()> {
             run_connect(&cli.server, journal, new, &name).await
         }
         Commands::List => run_list(&cli.server).await,
-        Commands::Submit { journal, message } => {
-            run_submit(&cli.server, &journal, &message).await
-        }
+        Commands::Submit { journal, message } => run_submit(&cli.server, &journal, &message).await,
         Commands::Fork { block } => run_fork(&cli.server, &block).await,
         Commands::Agent {
             journal,
@@ -105,13 +103,22 @@ async fn main() -> Result<()> {
     }
 }
 
-async fn run_connect(server: &str, journal_id: Option<String>, new: bool, name: &str) -> Result<()> {
+async fn run_connect(
+    server: &str,
+    journal_id: Option<String>,
+    new: bool,
+    name: &str,
+) -> Result<()> {
     let mut client = client::OuterClient::connect(server).await?;
 
     // Get or create journal
     let journal_id = if new || journal_id.is_none() {
         // Create new journal
-        let title = if new { Some("CLI Session".to_string()) } else { None };
+        let title = if new {
+            Some("CLI Session".to_string())
+        } else {
+            None
+        };
         let journal = client.create_journal(title).await?;
         tracing::info!("Created journal: {}", journal.id);
         journal.id
@@ -156,19 +163,17 @@ async fn run_submit(server: &str, journal_id: &str, message: &str) -> Result<()>
 
     // Submit and stream response
     client
-        .submit_and_stream(journal_id, message.to_string(), |event| {
-            match event {
-                messages::ServerMessage::BlockContentDelta { delta, .. } => {
-                    print!("{}", delta);
-                    std::io::Write::flush(&mut std::io::stdout()).ok();
-                }
-                messages::ServerMessage::BlockStatusChanged { status, .. } => {
-                    if status == messages::BlockStatus::Complete {
-                        println!();
-                    }
-                }
-                _ => {}
+        .submit_and_stream(journal_id, message.to_string(), |event| match event {
+            messages::ServerMessage::BlockContentDelta { delta, .. } => {
+                print!("{}", delta);
+                std::io::Write::flush(&mut std::io::stdout()).ok();
             }
+            messages::ServerMessage::BlockStatusChanged { status, .. } => {
+                if status == messages::BlockStatus::Complete {
+                    println!();
+                }
+            }
+            _ => {}
         })
         .await?;
 
@@ -182,22 +187,20 @@ async fn run_fork(server: &str, block_id: &str) -> Result<()> {
     println!("Forking block {}...", block_id);
 
     client
-        .fork_and_stream(block_id, |event| {
-            match event {
-                messages::ServerMessage::BlockForked { new_block, .. } => {
-                    println!("Created fork: {}", new_block.id);
-                }
-                messages::ServerMessage::BlockContentDelta { delta, .. } => {
-                    print!("{}", delta);
-                    std::io::Write::flush(&mut std::io::stdout()).ok();
-                }
-                messages::ServerMessage::BlockStatusChanged { status, .. } => {
-                    if status == messages::BlockStatus::Complete {
-                        println!();
-                    }
-                }
-                _ => {}
+        .fork_and_stream(block_id, |event| match event {
+            messages::ServerMessage::BlockForked { new_block, .. } => {
+                println!("Created fork: {}", new_block.id);
             }
+            messages::ServerMessage::BlockContentDelta { delta, .. } => {
+                print!("{}", delta);
+                std::io::Write::flush(&mut std::io::stdout()).ok();
+            }
+            messages::ServerMessage::BlockStatusChanged { status, .. } => {
+                if status == messages::BlockStatus::Complete {
+                    println!();
+                }
+            }
+            _ => {}
         })
         .await?;
 

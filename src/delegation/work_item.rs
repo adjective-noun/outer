@@ -43,9 +43,7 @@ impl WorkItemStatus {
     pub fn is_terminal(&self) -> bool {
         matches!(
             self,
-            WorkItemStatus::Approved
-                | WorkItemStatus::Declined
-                | WorkItemStatus::Cancelled
+            WorkItemStatus::Approved | WorkItemStatus::Declined | WorkItemStatus::Cancelled
         )
     }
 
@@ -73,19 +71,14 @@ impl std::str::FromStr for WorkItemStatus {
 }
 
 /// Priority level for work items
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkPriority {
     Low = 0,
+    #[default]
     Normal = 1,
     High = 2,
     Urgent = 3,
-}
-
-impl Default for WorkPriority {
-    fn default() -> Self {
-        WorkPriority::Normal
-    }
 }
 
 impl WorkPriority {
@@ -383,19 +376,17 @@ mod tests {
     use super::*;
 
     fn make_work_item() -> WorkItem {
-        WorkItem::new(
-            Uuid::new_v4(),
-            "Test task",
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-        )
+        WorkItem::new(Uuid::new_v4(), "Test task", Uuid::new_v4(), Uuid::new_v4())
     }
 
     #[test]
     fn test_work_item_status_as_str() {
         assert_eq!(WorkItemStatus::Pending.as_str(), "pending");
         assert_eq!(WorkItemStatus::InProgress.as_str(), "in_progress");
-        assert_eq!(WorkItemStatus::AwaitingApproval.as_str(), "awaiting_approval");
+        assert_eq!(
+            WorkItemStatus::AwaitingApproval.as_str(),
+            "awaiting_approval"
+        );
         assert_eq!(WorkItemStatus::Approved.as_str(), "approved");
         assert_eq!(WorkItemStatus::Rejected.as_str(), "rejected");
         assert_eq!(WorkItemStatus::Declined.as_str(), "declined");
@@ -404,8 +395,14 @@ mod tests {
 
     #[test]
     fn test_work_item_status_from_str() {
-        assert_eq!("pending".parse::<WorkItemStatus>().unwrap(), WorkItemStatus::Pending);
-        assert_eq!("in_progress".parse::<WorkItemStatus>().unwrap(), WorkItemStatus::InProgress);
+        assert_eq!(
+            "pending".parse::<WorkItemStatus>().unwrap(),
+            WorkItemStatus::Pending
+        );
+        assert_eq!(
+            "in_progress".parse::<WorkItemStatus>().unwrap(),
+            WorkItemStatus::InProgress
+        );
     }
 
     #[test]
@@ -459,7 +456,13 @@ mod tests {
         let delegator_id = Uuid::new_v4();
         let assignee_id = Uuid::new_v4();
 
-        let item = WorkItem::for_block(journal_id, block_id, "Work on block", delegator_id, assignee_id);
+        let item = WorkItem::for_block(
+            journal_id,
+            block_id,
+            "Work on block",
+            delegator_id,
+            assignee_id,
+        );
 
         assert_eq!(item.block_id, Some(block_id));
     }

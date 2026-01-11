@@ -4,15 +4,19 @@
 	export let participants: Participant[] = [];
 	export let currentParticipant: Participant | null = null;
 
-	$: humans = participants.filter(p => p.kind === 'user');
-	$: agents = participants.filter(p => p.kind === 'agent');
+	$: humans = participants.filter((p) => p.kind === 'user');
+	$: agents = participants.filter((p) => p.kind === 'agent');
 
 	function getStatusColor(status: Participant['status']): string {
 		switch (status) {
-			case 'active': return 'var(--color-success)';
-			case 'idle': return 'var(--color-warning)';
-			case 'away': return 'var(--color-text-muted)';
-			default: return 'var(--color-text-muted)';
+			case 'active':
+				return 'var(--color-success)';
+			case 'idle':
+				return 'var(--color-warning)';
+			case 'away':
+				return 'var(--color-text-muted)';
+			default:
+				return 'var(--color-text-muted)';
 		}
 	}
 </script>

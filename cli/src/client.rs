@@ -140,7 +140,10 @@ impl OuterClient {
     }
 
     /// Get a journal with its blocks
-    pub async fn get_journal(&mut self, journal_id: Uuid) -> Result<(Journal, Vec<crate::messages::Block>)> {
+    pub async fn get_journal(
+        &mut self,
+        journal_id: Uuid,
+    ) -> Result<(Journal, Vec<crate::messages::Block>)> {
         self.send(ClientMessage::GetJournal { journal_id }).await?;
 
         while let Some(msg) = self.recv().await {
@@ -164,7 +167,10 @@ impl OuterClient {
         journal_id: Uuid,
         name: String,
         kind: Option<String>,
-    ) -> Result<(crate::messages::Participant, Vec<crate::messages::Participant>)> {
+    ) -> Result<(
+        crate::messages::Participant,
+        Vec<crate::messages::Participant>,
+    )> {
         self.send(ClientMessage::Subscribe {
             journal_id,
             name,
@@ -192,7 +198,12 @@ impl OuterClient {
     }
 
     /// Submit a message and stream the response
-    pub async fn submit_and_stream<F>(&mut self, journal_id: Uuid, content: String, mut callback: F) -> Result<()>
+    pub async fn submit_and_stream<F>(
+        &mut self,
+        journal_id: Uuid,
+        content: String,
+        mut callback: F,
+    ) -> Result<()>
     where
         F: FnMut(ServerMessage),
     {

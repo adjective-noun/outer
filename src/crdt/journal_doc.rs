@@ -31,7 +31,10 @@ impl JournalDoc {
     }
 
     /// Create from an existing state vector (for syncing)
-    pub fn from_update(journal_id: Uuid, update: &[u8]) -> Result<Self, yrs::encoding::read::Error> {
+    pub fn from_update(
+        journal_id: Uuid,
+        update: &[u8],
+    ) -> Result<Self, yrs::encoding::read::Error> {
         let doc = Doc::new();
         {
             let mut txn = doc.transact_mut();
@@ -222,7 +225,10 @@ mod tests {
         let block_id = Uuid::new_v4();
 
         doc.set_block_content(block_id, "Hello, world!");
-        assert_eq!(doc.get_block_content(block_id), Some("Hello, world!".to_string()));
+        assert_eq!(
+            doc.get_block_content(block_id),
+            Some("Hello, world!".to_string())
+        );
     }
 
     #[test]
@@ -232,7 +238,10 @@ mod tests {
 
         doc.set_block_content(block_id, "Hello");
         doc.append_block_content(block_id, ", world!");
-        assert_eq!(doc.get_block_content(block_id), Some("Hello, world!".to_string()));
+        assert_eq!(
+            doc.get_block_content(block_id),
+            Some("Hello, world!".to_string())
+        );
     }
 
     #[test]
@@ -271,7 +280,10 @@ mod tests {
         let update = doc1.encode_state();
 
         let doc2 = JournalDoc::from_update(doc1.journal_id(), &update).unwrap();
-        assert_eq!(doc2.get_block_content(block_id), Some("Hello from doc1".to_string()));
+        assert_eq!(
+            doc2.get_block_content(block_id),
+            Some("Hello from doc1".to_string())
+        );
     }
 
     #[test]
@@ -287,7 +299,10 @@ mod tests {
         // Apply diff to new doc
         let doc2 = JournalDoc::new(doc1.journal_id());
         doc2.apply_update(&diff).unwrap();
-        assert_eq!(doc2.get_block_content(block_id), Some("Initial".to_string()));
+        assert_eq!(
+            doc2.get_block_content(block_id),
+            Some("Initial".to_string())
+        );
     }
 
     #[test]

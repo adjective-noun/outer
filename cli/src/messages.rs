@@ -142,7 +142,10 @@ pub enum ServerMessage {
     /// Journal was created
     JournalCreated { journal_id: Uuid, title: String },
     /// Journal with blocks
-    Journal { journal: Journal, blocks: Vec<Block> },
+    Journal {
+        journal: Journal,
+        blocks: Vec<Block>,
+    },
     /// List of journals
     Journals { journals: Vec<Journal> },
     /// Block was created

@@ -8,12 +8,12 @@
 
 	const dispatch = createEventDispatcher();
 
-	$: pendingApprovals = approvals.filter(a => a.status === 'pending');
+	$: pendingApprovals = approvals.filter((a) => a.status === 'pending');
 
 	let feedbackInputs: Record<string, string> = {};
 
 	function getWorkItem(workItemId: string): WorkItem | undefined {
-		return workItems.find(w => w.id === workItemId);
+		return workItems.find((w) => w.id === workItemId);
 	}
 
 	function handleApprove(approval: ApprovalRequest) {
@@ -51,7 +51,11 @@
 				<div class="approval-card">
 					<div class="approval-info">
 						<h3>{workItem?.description ?? 'Work Item'}</h3>
-						<span class="priority" class:urgent={workItem?.priority === 'urgent'} class:high={workItem?.priority === 'high'}>
+						<span
+							class="priority"
+							class:urgent={workItem?.priority === 'urgent'}
+							class:high={workItem?.priority === 'high'}
+						>
 							{workItem?.priority ?? 'normal'}
 						</span>
 					</div>
@@ -72,12 +76,8 @@
 					</div>
 
 					<div class="approval-actions">
-						<button class="approve-btn" on:click={() => handleApprove(approval)}>
-							Approve
-						</button>
-						<button class="reject-btn" on:click={() => handleReject(approval)}>
-							Reject
-						</button>
+						<button class="approve-btn" on:click={() => handleApprove(approval)}> Approve </button>
+						<button class="reject-btn" on:click={() => handleReject(approval)}> Reject </button>
 					</div>
 				</div>
 			{/each}

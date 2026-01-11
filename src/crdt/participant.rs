@@ -253,9 +253,18 @@ mod tests {
 
     #[test]
     fn test_participant_kind_from_str() {
-        assert_eq!("user".parse::<ParticipantKind>().unwrap(), ParticipantKind::User);
-        assert_eq!("agent".parse::<ParticipantKind>().unwrap(), ParticipantKind::Agent);
-        assert_eq!("observer".parse::<ParticipantKind>().unwrap(), ParticipantKind::Observer);
+        assert_eq!(
+            "user".parse::<ParticipantKind>().unwrap(),
+            ParticipantKind::User
+        );
+        assert_eq!(
+            "agent".parse::<ParticipantKind>().unwrap(),
+            ParticipantKind::Agent
+        );
+        assert_eq!(
+            "observer".parse::<ParticipantKind>().unwrap(),
+            ParticipantKind::Observer
+        );
     }
 
     #[test]
@@ -273,9 +282,18 @@ mod tests {
 
     #[test]
     fn test_participant_status_from_str() {
-        assert_eq!("active".parse::<ParticipantStatus>().unwrap(), ParticipantStatus::Active);
-        assert_eq!("idle".parse::<ParticipantStatus>().unwrap(), ParticipantStatus::Idle);
-        assert_eq!("disconnected".parse::<ParticipantStatus>().unwrap(), ParticipantStatus::Disconnected);
+        assert_eq!(
+            "active".parse::<ParticipantStatus>().unwrap(),
+            ParticipantStatus::Active
+        );
+        assert_eq!(
+            "idle".parse::<ParticipantStatus>().unwrap(),
+            ParticipantStatus::Idle
+        );
+        assert_eq!(
+            "disconnected".parse::<ParticipantStatus>().unwrap(),
+            ParticipantStatus::Disconnected
+        );
     }
 
     #[test]

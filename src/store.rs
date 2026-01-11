@@ -260,8 +260,8 @@ impl Store {
             original.journal_id,
             BlockType::User,
             &content,
-            Some(parent_id),     // parent_id: branching point
-            Some(block_id),      // forked_from_id: the block being re-run
+            Some(parent_id), // parent_id: branching point
+            Some(block_id),  // forked_from_id: the block being re-run
         )
         .await
     }
@@ -920,11 +920,23 @@ mod tests {
 
         // Create children
         let _child1 = store
-            .create_block_with_lineage(journal.id, BlockType::User, "Child 1", Some(parent.id), None)
+            .create_block_with_lineage(
+                journal.id,
+                BlockType::User,
+                "Child 1",
+                Some(parent.id),
+                None,
+            )
             .await
             .unwrap();
         let _child2 = store
-            .create_block_with_lineage(journal.id, BlockType::User, "Child 2", Some(parent.id), None)
+            .create_block_with_lineage(
+                journal.id,
+                BlockType::User,
+                "Child 2",
+                Some(parent.id),
+                None,
+            )
             .await
             .unwrap();
 

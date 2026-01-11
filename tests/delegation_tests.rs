@@ -69,17 +69,30 @@ async fn setup_server() -> (SocketAddr, sqlx::SqlitePool) {
     (addr, pool)
 }
 
-async fn connect_ws(addr: SocketAddr) -> tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>> {
+async fn connect_ws(
+    addr: SocketAddr,
+) -> tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>> {
     let url = format!("ws://{}/ws", addr);
     let (ws_stream, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
     ws_stream
 }
 
-async fn send_msg(ws: &mut tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>, msg: serde_json::Value) {
-    ws.send(Message::Text(msg.to_string().into())).await.unwrap();
+async fn send_msg(
+    ws: &mut tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >,
+    msg: serde_json::Value,
+) {
+    ws.send(Message::Text(msg.to_string().into()))
+        .await
+        .unwrap();
 }
 
-async fn recv_msg(ws: &mut tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>) -> serde_json::Value {
+async fn recv_msg(
+    ws: &mut tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >,
+) -> serde_json::Value {
     if let Some(Ok(Message::Text(response))) = ws.next().await {
         serde_json::from_str(&response).unwrap()
     } else {
@@ -224,7 +237,10 @@ async fn test_agent_to_human_delegation() {
 
     let response = recv_msg(&mut ws_bot).await;
     assert_eq!(response["type"], "work_delegated");
-    assert_eq!(response["work_item"]["description"], "Need clarification on requirements");
+    assert_eq!(
+        response["work_item"]["description"],
+        "Need clarification on requirements"
+    );
 }
 
 #[tokio::test]
@@ -586,7 +602,10 @@ async fn test_agent_to_agent_delegation() {
     send_msg(&mut ws_bot1, msg).await;
     let response = recv_msg(&mut ws_bot1).await;
     assert_eq!(response["type"], "work_delegated");
-    assert_eq!(response["work_item"]["description"], "Subtask for specialized agent");
+    assert_eq!(
+        response["work_item"]["description"],
+        "Subtask for specialized agent"
+    );
 }
 
 #[tokio::test]

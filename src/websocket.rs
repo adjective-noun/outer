@@ -14,9 +14,9 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 
 use crate::crdt::{Participant, ParticipantKind, ParticipantStatus, RoomEvent};
-use crate::delegation::{Capability, WorkItemStatus};
-use crate::delegation::work_item::WorkPriority;
 use crate::delegation::capability::CapabilitySet;
+use crate::delegation::work_item::WorkPriority;
+use crate::delegation::{Capability, WorkItemStatus};
 use crate::error;
 use crate::models::{BlockStatus, BlockType};
 use crate::opencode::{OpenCodeClient, SendMessageRequest, StreamEvent};
@@ -29,7 +29,8 @@ fn make_error_message(err: &error::AppError) -> ServerMessage {
     // Extract user-friendly message based on error type
     let friendly_message = if full_error.contains("Invalid JSON from OpenCode") {
         "OpenCode returned an invalid response. Check the console for details.".to_string()
-    } else if full_error.contains("Failed to connect") || full_error.contains("Connection refused") {
+    } else if full_error.contains("Failed to connect") || full_error.contains("Connection refused")
+    {
         "Cannot connect to OpenCode server".to_string()
     } else if full_error.contains("Failed to create session") {
         "Failed to create OpenCode session".to_string()
@@ -114,7 +115,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                 };
                 let mut sender = sender.lock().await;
                 if let Err(e) = sender
-                    .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                    .send(Message::Text(serde_json::to_string(&error).unwrap()))
                     .await
                 {
                     tracing::error!("Failed to send error: {}", e);
@@ -143,7 +144,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                 {
                     let error = make_error_message(&e);
                     if let Err(e) = sender_guard
-                        .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                        .send(Message::Text(serde_json::to_string(&error).unwrap()))
                         .await
                     {
                         tracing::error!("Failed to send error: {}", e);
@@ -159,7 +160,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         };
                         let mut sender = sender.lock().await;
                         if let Err(e) = sender
-                            .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                            .send(Message::Text(serde_json::to_string(&msg).unwrap()))
                             .await
                         {
                             tracing::error!("Failed to send journal created: {}", e);
@@ -172,7 +173,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         };
                         let mut sender = sender.lock().await;
                         if let Err(e) = sender
-                            .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                            .send(Message::Text(serde_json::to_string(&error).unwrap()))
                             .await
                         {
                             tracing::error!("Failed to send error: {}", e);
@@ -191,7 +192,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         let msg = ServerMessage::Journal { journal, blocks };
                         let mut sender = sender.lock().await;
                         if let Err(e) = sender
-                            .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                            .send(Message::Text(serde_json::to_string(&msg).unwrap()))
                             .await
                         {
                             tracing::error!("Failed to send journal: {}", e);
@@ -204,7 +205,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         };
                         let mut sender = sender.lock().await;
                         if let Err(e) = sender
-                            .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                            .send(Message::Text(serde_json::to_string(&error).unwrap()))
                             .await
                         {
                             tracing::error!("Failed to send error: {}", e);
@@ -217,7 +218,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     let msg = ServerMessage::Journals { journals };
                     let mut sender = sender.lock().await;
                     if let Err(e) = sender
-                        .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                        .send(Message::Text(serde_json::to_string(&msg).unwrap()))
                         .await
                     {
                         tracing::error!("Failed to send journals: {}", e);
@@ -230,7 +231,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     };
                     let mut sender = sender.lock().await;
                     if let Err(e) = sender
-                        .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                        .send(Message::Text(serde_json::to_string(&error).unwrap()))
                         .await
                     {
                         tracing::error!("Failed to send error: {}", e);
@@ -247,7 +248,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                 {
                     let error = make_error_message(&e);
                     if let Err(e) = sender_guard
-                        .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                        .send(Message::Text(serde_json::to_string(&error).unwrap()))
                         .await
                     {
                         tracing::error!("Failed to send error: {}", e);
@@ -264,7 +265,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                 {
                     let error = make_error_message(&e);
                     if let Err(e) = sender_guard
-                        .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                        .send(Message::Text(serde_json::to_string(&error).unwrap()))
                         .await
                     {
                         tracing::error!("Failed to send error: {}", e);
@@ -279,7 +280,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         details: None,
                     };
                     if let Err(e) = sender_guard
-                        .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                        .send(Message::Text(serde_json::to_string(&error).unwrap()))
                         .await
                     {
                         tracing::error!("Failed to send error: {}", e);
@@ -331,7 +332,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     };
                     let mut sender = sender.lock().await;
                     if let Err(e) = sender
-                        .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                        .send(Message::Text(serde_json::to_string(&msg).unwrap()))
                         .await
                     {
                         tracing::error!("Failed to send presence: {}", e);
@@ -343,7 +344,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     };
                     let mut sender = sender.lock().await;
                     let _ = sender
-                        .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                        .send(Message::Text(serde_json::to_string(&msg).unwrap()))
                         .await;
                 }
             }
@@ -366,7 +367,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                             };
                             let mut sender = sender.lock().await;
                             let _ = sender
-                                .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                                .send(Message::Text(serde_json::to_string(&error).unwrap()))
                                 .await;
                         }
                     }
@@ -378,12 +379,10 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
             } => {
                 if let Some(room) = state.room_manager.get(journal_id).await {
                     let state_data = match state_vector {
-                        Some(sv) => {
-                            match base64_decode(&sv) {
-                                Ok(sv_bytes) => room.doc().encode_diff(&sv_bytes).ok(),
-                                Err(_) => Some(room.get_sync_state()),
-                            }
-                        }
+                        Some(sv) => match base64_decode(&sv) {
+                            Ok(sv_bytes) => room.doc().encode_diff(&sv_bytes).ok(),
+                            Err(_) => Some(room.get_sync_state()),
+                        },
                         None => Some(room.get_sync_state()),
                     };
 
@@ -394,7 +393,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         };
                         let mut sender = sender.lock().await;
                         if let Err(e) = sender
-                            .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                            .send(Message::Text(serde_json::to_string(&msg).unwrap()))
                             .await
                         {
                             tracing::error!("Failed to send sync state: {}", e);
@@ -427,24 +426,33 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         .register_participant_with_capabilities(participant, cap_set)
                         .await
                 } else {
-                    state.delegation_manager.register_participant(participant).await
+                    state
+                        .delegation_manager
+                        .register_participant(participant)
+                        .await
                 };
 
                 // Store registration
                 {
                     let mut conn = conn_state.lock().await;
-                    conn.delegation_registrations.insert(journal_id, registered.id());
+                    conn.delegation_registrations
+                        .insert(journal_id, registered.id());
                 }
 
                 let msg = ServerMessage::ParticipantRegistered {
                     participant_id: registered.id(),
                     name: registered.name().to_string(),
                     kind: registered.kind().as_str().to_string(),
-                    capabilities: registered.capabilities.to_vec().iter().map(|c| c.as_str().to_string()).collect(),
+                    capabilities: registered
+                        .capabilities
+                        .to_vec()
+                        .iter()
+                        .map(|c| c.as_str().to_string())
+                        .collect(),
                 };
                 let mut sender = sender.lock().await;
                 let _ = sender
-                    .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                    .send(Message::Text(serde_json::to_string(&msg).unwrap()))
                     .await;
             }
             ClientMessage::Delegate {
@@ -466,7 +474,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         };
                         let mut sender = sender.lock().await;
                         let _ = sender
-                            .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                            .send(Message::Text(serde_json::to_string(&error).unwrap()))
                             .await;
                         continue;
                     }
@@ -494,7 +502,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         let msg = ServerMessage::WorkDelegated { work_item };
                         let mut sender = sender.lock().await;
                         let _ = sender
-                            .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                            .send(Message::Text(serde_json::to_string(&msg).unwrap()))
                             .await;
                     }
                     Err(e) => {
@@ -504,7 +512,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         };
                         let mut sender = sender.lock().await;
                         let _ = sender
-                            .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                            .send(Message::Text(serde_json::to_string(&error).unwrap()))
                             .await;
                     }
                 }
@@ -524,13 +532,17 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         };
                         let mut sender = sender.lock().await;
                         let _ = sender
-                            .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                            .send(Message::Text(serde_json::to_string(&error).unwrap()))
                             .await;
                         continue;
                     }
                 };
 
-                match state.delegation_manager.accept_work(work_item_id, participant_id).await {
+                match state
+                    .delegation_manager
+                    .accept_work(work_item_id, participant_id)
+                    .await
+                {
                     Ok(_) => {
                         let msg = ServerMessage::WorkAccepted {
                             work_item_id,
@@ -538,7 +550,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         };
                         let mut sender = sender.lock().await;
                         let _ = sender
-                            .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                            .send(Message::Text(serde_json::to_string(&msg).unwrap()))
                             .await;
                     }
                     Err(e) => {
@@ -548,7 +560,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         };
                         let mut sender = sender.lock().await;
                         let _ = sender
-                            .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                            .send(Message::Text(serde_json::to_string(&error).unwrap()))
                             .await;
                     }
                 }
@@ -567,13 +579,17 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         };
                         let mut sender = sender.lock().await;
                         let _ = sender
-                            .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                            .send(Message::Text(serde_json::to_string(&error).unwrap()))
                             .await;
                         continue;
                     }
                 };
 
-                match state.delegation_manager.decline_work(work_item_id, participant_id).await {
+                match state
+                    .delegation_manager
+                    .decline_work(work_item_id, participant_id)
+                    .await
+                {
                     Ok(_) => {
                         let msg = ServerMessage::WorkDeclined {
                             work_item_id,
@@ -581,7 +597,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         };
                         let mut sender = sender.lock().await;
                         let _ = sender
-                            .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                            .send(Message::Text(serde_json::to_string(&msg).unwrap()))
                             .await;
                     }
                     Err(e) => {
@@ -591,12 +607,15 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         };
                         let mut sender = sender.lock().await;
                         let _ = sender
-                            .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                            .send(Message::Text(serde_json::to_string(&error).unwrap()))
                             .await;
                     }
                 }
             }
-            ClientMessage::SubmitWork { work_item_id, result } => {
+            ClientMessage::SubmitWork {
+                work_item_id,
+                result,
+            } => {
                 let conn = conn_state.lock().await;
                 let participant_id = conn.delegation_registrations.values().next().copied();
                 drop(conn);
@@ -610,25 +629,34 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         };
                         let mut sender = sender.lock().await;
                         let _ = sender
-                            .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                            .send(Message::Text(serde_json::to_string(&error).unwrap()))
                             .await;
                         continue;
                     }
                 };
 
-                match state.delegation_manager.submit_work(work_item_id, participant_id, result).await {
+                match state
+                    .delegation_manager
+                    .submit_work(work_item_id, participant_id, result)
+                    .await
+                {
                     Ok(work_item) => {
                         if work_item.status == WorkItemStatus::AwaitingApproval {
                             // Get the approval request
-                            let approvals = state.delegation_manager.get_approval_queue(work_item.get_approver_id()).await;
-                            if let Some(approval) = approvals.iter().find(|a| a.work_item_id == work_item_id) {
+                            let approvals = state
+                                .delegation_manager
+                                .get_approval_queue(work_item.get_approver_id())
+                                .await;
+                            if let Some(approval) =
+                                approvals.iter().find(|a| a.work_item_id == work_item_id)
+                            {
                                 let msg = ServerMessage::ApprovalRequested {
                                     approval: approval.clone(),
                                     work_item: work_item.clone(),
                                 };
                                 let mut sender = sender.lock().await;
                                 let _ = sender
-                                    .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                                    .send(Message::Text(serde_json::to_string(&msg).unwrap()))
                                     .await;
                             }
                         } else {
@@ -639,7 +667,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                             };
                             let mut sender = sender.lock().await;
                             let _ = sender
-                                .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                                .send(Message::Text(serde_json::to_string(&msg).unwrap()))
                                 .await;
                         }
                     }
@@ -650,12 +678,15 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         };
                         let mut sender = sender.lock().await;
                         let _ = sender
-                            .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                            .send(Message::Text(serde_json::to_string(&error).unwrap()))
                             .await;
                     }
                 }
             }
-            ClientMessage::ApproveWork { approval_id, feedback } => {
+            ClientMessage::ApproveWork {
+                approval_id,
+                feedback,
+            } => {
                 let conn = conn_state.lock().await;
                 let participant_id = conn.delegation_registrations.values().next().copied();
                 drop(conn);
@@ -669,13 +700,17 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         };
                         let mut sender = sender.lock().await;
                         let _ = sender
-                            .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                            .send(Message::Text(serde_json::to_string(&error).unwrap()))
                             .await;
                         continue;
                     }
                 };
 
-                match state.delegation_manager.approve(approval_id, participant_id, feedback.clone()).await {
+                match state
+                    .delegation_manager
+                    .approve(approval_id, participant_id, feedback.clone())
+                    .await
+                {
                     Ok((_, work_item)) => {
                         let msg = ServerMessage::WorkApproved {
                             work_item_id: work_item.id,
@@ -684,7 +719,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         };
                         let mut sender = sender.lock().await;
                         let _ = sender
-                            .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                            .send(Message::Text(serde_json::to_string(&msg).unwrap()))
                             .await;
                     }
                     Err(e) => {
@@ -694,12 +729,15 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         };
                         let mut sender = sender.lock().await;
                         let _ = sender
-                            .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                            .send(Message::Text(serde_json::to_string(&error).unwrap()))
                             .await;
                     }
                 }
             }
-            ClientMessage::RejectWork { approval_id, feedback } => {
+            ClientMessage::RejectWork {
+                approval_id,
+                feedback,
+            } => {
                 let conn = conn_state.lock().await;
                 let participant_id = conn.delegation_registrations.values().next().copied();
                 drop(conn);
@@ -713,13 +751,17 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         };
                         let mut sender = sender.lock().await;
                         let _ = sender
-                            .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                            .send(Message::Text(serde_json::to_string(&error).unwrap()))
                             .await;
                         continue;
                     }
                 };
 
-                match state.delegation_manager.reject(approval_id, participant_id, &feedback).await {
+                match state
+                    .delegation_manager
+                    .reject(approval_id, participant_id, &feedback)
+                    .await
+                {
                     Ok((_, work_item)) => {
                         let msg = ServerMessage::WorkRejected {
                             work_item_id: work_item.id,
@@ -728,7 +770,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         };
                         let mut sender = sender.lock().await;
                         let _ = sender
-                            .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                            .send(Message::Text(serde_json::to_string(&msg).unwrap()))
                             .await;
                     }
                     Err(e) => {
@@ -738,7 +780,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         };
                         let mut sender = sender.lock().await;
                         let _ = sender
-                            .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                            .send(Message::Text(serde_json::to_string(&error).unwrap()))
                             .await;
                     }
                 }
@@ -757,13 +799,17 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         };
                         let mut sender = sender.lock().await;
                         let _ = sender
-                            .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                            .send(Message::Text(serde_json::to_string(&error).unwrap()))
                             .await;
                         continue;
                     }
                 };
 
-                match state.delegation_manager.cancel_work(work_item_id, participant_id).await {
+                match state
+                    .delegation_manager
+                    .cancel_work(work_item_id, participant_id)
+                    .await
+                {
                     Ok(_) => {
                         let msg = ServerMessage::WorkCancelled {
                             work_item_id,
@@ -771,7 +817,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         };
                         let mut sender = sender.lock().await;
                         let _ = sender
-                            .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                            .send(Message::Text(serde_json::to_string(&msg).unwrap()))
                             .await;
                     }
                     Err(e) => {
@@ -781,7 +827,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         };
                         let mut sender = sender.lock().await;
                         let _ = sender
-                            .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                            .send(Message::Text(serde_json::to_string(&error).unwrap()))
                             .await;
                     }
                 }
@@ -800,13 +846,17 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         };
                         let mut sender = sender.lock().await;
                         let _ = sender
-                            .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                            .send(Message::Text(serde_json::to_string(&error).unwrap()))
                             .await;
                         continue;
                     }
                 };
 
-                match state.delegation_manager.claim_work(work_item_id, participant_id).await {
+                match state
+                    .delegation_manager
+                    .claim_work(work_item_id, participant_id)
+                    .await
+                {
                     Ok(_) => {
                         let msg = ServerMessage::WorkClaimed {
                             work_item_id,
@@ -814,7 +864,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         };
                         let mut sender = sender.lock().await;
                         let _ = sender
-                            .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                            .send(Message::Text(serde_json::to_string(&msg).unwrap()))
                             .await;
                     }
                     Err(e) => {
@@ -824,7 +874,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         };
                         let mut sender = sender.lock().await;
                         let _ = sender
-                            .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                            .send(Message::Text(serde_json::to_string(&error).unwrap()))
                             .await;
                     }
                 }
@@ -843,7 +893,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                 let msg = ServerMessage::WorkQueue { items };
                 let mut sender = sender.lock().await;
                 let _ = sender
-                    .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                    .send(Message::Text(serde_json::to_string(&msg).unwrap()))
                     .await;
             }
             ClientMessage::GetApprovalQueue => {
@@ -860,7 +910,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                 let msg = ServerMessage::ApprovalQueue { items };
                 let mut sender = sender.lock().await;
                 let _ = sender
-                    .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                    .send(Message::Text(serde_json::to_string(&msg).unwrap()))
                     .await;
             }
             ClientMessage::SetAcceptingWork { accepting } => {
@@ -877,13 +927,17 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         };
                         let mut sender = sender.lock().await;
                         let _ = sender
-                            .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                            .send(Message::Text(serde_json::to_string(&error).unwrap()))
                             .await;
                         continue;
                     }
                 };
 
-                match state.delegation_manager.set_accepting_work(participant_id, accepting).await {
+                match state
+                    .delegation_manager
+                    .set_accepting_work(participant_id, accepting)
+                    .await
+                {
                     Ok(_) => {
                         let msg = ServerMessage::AcceptingWorkChanged {
                             participant_id,
@@ -891,7 +945,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         };
                         let mut sender = sender.lock().await;
                         let _ = sender
-                            .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                            .send(Message::Text(serde_json::to_string(&msg).unwrap()))
                             .await;
                     }
                     Err(e) => {
@@ -901,7 +955,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         };
                         let mut sender = sender.lock().await;
                         let _ = sender
-                            .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
+                            .send(Message::Text(serde_json::to_string(&error).unwrap()))
                             .await;
                     }
                 }
@@ -911,7 +965,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                 let msg = ServerMessage::AvailableParticipants { participants };
                 let mut sender = sender.lock().await;
                 let _ = sender
-                    .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                    .send(Message::Text(serde_json::to_string(&msg).unwrap()))
                     .await;
             }
         }
@@ -926,7 +980,10 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
     }
     // Unregister from delegation system
     for (_, participant_id) in conn.delegation_registrations.iter() {
-        state.delegation_manager.unregister_participant(*participant_id).await;
+        state
+            .delegation_manager
+            .unregister_participant(*participant_id)
+            .await;
     }
 }
 
@@ -966,7 +1023,7 @@ async fn handle_subscribe(
     {
         let mut sender_guard = sender.lock().await;
         if let Err(e) = sender_guard
-            .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+            .send(Message::Text(serde_json::to_string(&msg).unwrap()))
             .await
         {
             tracing::error!("Failed to send subscribed: {}", e);
@@ -990,12 +1047,12 @@ async fn handle_subscribe(
                         participant: p,
                     })
                 }
-                RoomEvent::ParticipantLeft { participant_id: pid } => {
-                    Some(ServerMessage::ParticipantLeft {
-                        journal_id,
-                        participant_id: pid,
-                    })
-                }
+                RoomEvent::ParticipantLeft {
+                    participant_id: pid,
+                } => Some(ServerMessage::ParticipantLeft {
+                    journal_id,
+                    participant_id: pid,
+                }),
                 RoomEvent::CursorMoved {
                     participant_id: pid,
                     block_id,
@@ -1040,7 +1097,7 @@ async fn handle_subscribe(
             if let Some(msg) = server_msg {
                 let mut sender_guard = sender_clone.lock().await;
                 if sender_guard
-                    .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                    .send(Message::Text(serde_json::to_string(&msg).unwrap()))
                     .await
                     .is_err()
                 {
@@ -1073,14 +1130,14 @@ async fn handle_unsubscribe(
     let msg = ServerMessage::Unsubscribed { journal_id };
     let mut sender = sender.lock().await;
     let _ = sender
-        .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+        .send(Message::Text(serde_json::to_string(&msg).unwrap()))
         .await;
 }
 
 /// Base64 encode helper
 fn base64_encode(data: &[u8]) -> String {
     const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut result = String::with_capacity((data.len() + 2) / 3 * 4);
+    let mut result = String::with_capacity(data.len().div_ceil(3) * 4);
 
     for chunk in data.chunks(3) {
         let b0 = chunk[0] as usize;
@@ -1127,7 +1184,7 @@ fn base64_decode(data: &str) -> Result<Vec<u8>, String> {
     }
 
     let bytes: Vec<u8> = data.bytes().filter(|&b| b != b'\n' && b != b'\r').collect();
-    if bytes.len() % 4 != 0 {
+    if !bytes.len().is_multiple_of(4) {
         return Err("Invalid base64 length".to_string());
     }
 
@@ -1172,7 +1229,7 @@ async fn handle_submit(
         block: user_block.clone(),
     };
     sender
-        .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+        .send(Message::Text(serde_json::to_string(&msg).unwrap()))
         .await
         .map_err(|e| error::AppError::Internal(e.to_string()))?;
 
@@ -1186,7 +1243,7 @@ async fn handle_submit(
         block: assistant_block.clone(),
     };
     sender
-        .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+        .send(Message::Text(serde_json::to_string(&msg).unwrap()))
         .await
         .map_err(|e| error::AppError::Internal(e.to_string()))?;
 
@@ -1215,7 +1272,7 @@ async fn handle_submit(
         status: BlockStatus::Streaming,
     };
     sender
-        .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+        .send(Message::Text(serde_json::to_string(&msg).unwrap()))
         .await
         .map_err(|e| error::AppError::Internal(e.to_string()))?;
 
@@ -1237,7 +1294,7 @@ async fn handle_submit(
                     delta: content_event.text,
                 };
                 sender
-                    .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                    .send(Message::Text(serde_json::to_string(&msg).unwrap()))
                     .await
                     .map_err(|e| error::AppError::Internal(e.to_string()))?;
             }
@@ -1257,7 +1314,7 @@ async fn handle_submit(
                     status: BlockStatus::Complete,
                 };
                 sender
-                    .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                    .send(Message::Text(serde_json::to_string(&msg).unwrap()))
                     .await
                     .map_err(|e| error::AppError::Internal(e.to_string()))?;
             }
@@ -1277,7 +1334,7 @@ async fn handle_submit(
                     status: BlockStatus::Error,
                 };
                 sender
-                    .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                    .send(Message::Text(serde_json::to_string(&msg).unwrap()))
                     .await
                     .map_err(|e| error::AppError::Internal(e.to_string()))?;
             }
@@ -1314,7 +1371,7 @@ async fn handle_fork(
         new_block: forked_block.clone(),
     };
     sender
-        .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+        .send(Message::Text(serde_json::to_string(&msg).unwrap()))
         .await
         .map_err(|e| error::AppError::Internal(e.to_string()))?;
 
@@ -1335,7 +1392,7 @@ async fn handle_fork(
         block: assistant_block.clone(),
     };
     sender
-        .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+        .send(Message::Text(serde_json::to_string(&msg).unwrap()))
         .await
         .map_err(|e| error::AppError::Internal(e.to_string()))?;
 
@@ -1354,8 +1411,15 @@ async fn handle_fork(
     };
 
     // Stream response from OpenCode
-    stream_response(sender, state, opencode, &session_id, assistant_block, &forked_block.content)
-        .await
+    stream_response(
+        sender,
+        state,
+        opencode,
+        &session_id,
+        assistant_block,
+        &forked_block.content,
+    )
+    .await
 }
 
 async fn handle_rerun(
@@ -1373,7 +1437,7 @@ async fn handle_rerun(
         block: rerun_block.clone(),
     };
     sender
-        .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+        .send(Message::Text(serde_json::to_string(&msg).unwrap()))
         .await
         .map_err(|e| error::AppError::Internal(e.to_string()))?;
 
@@ -1393,7 +1457,7 @@ async fn handle_rerun(
         block: assistant_block.clone(),
     };
     sender
-        .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+        .send(Message::Text(serde_json::to_string(&msg).unwrap()))
         .await
         .map_err(|e| error::AppError::Internal(e.to_string()))?;
 
@@ -1412,8 +1476,15 @@ async fn handle_rerun(
     };
 
     // Stream response from OpenCode
-    stream_response(sender, state, opencode, &session_id, assistant_block, &rerun_block.content)
-        .await
+    stream_response(
+        sender,
+        state,
+        opencode,
+        &session_id,
+        assistant_block,
+        &rerun_block.content,
+    )
+    .await
 }
 
 async fn handle_cancel(
@@ -1429,7 +1500,7 @@ async fn handle_cancel(
 
     let msg = ServerMessage::BlockCancelled { block_id };
     sender
-        .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+        .send(Message::Text(serde_json::to_string(&msg).unwrap()))
         .await
         .map_err(|e| error::AppError::Internal(e.to_string()))?;
 
@@ -1456,15 +1527,18 @@ async fn stream_response(
         status: BlockStatus::Streaming,
     };
     sender
-        .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+        .send(Message::Text(serde_json::to_string(&msg).unwrap()))
         .await
         .map_err(|e| error::AppError::Internal(e.to_string()))?;
 
     // Stream response from OpenCode
     let mut stream = opencode
-        .send_message(session_id, SendMessageRequest {
-            content: content.to_string(),
-        })
+        .send_message(
+            session_id,
+            SendMessageRequest {
+                content: content.to_string(),
+            },
+        )
         .await?;
 
     let mut full_content = String::new();
@@ -1479,7 +1553,7 @@ async fn stream_response(
                     delta: content_event.text,
                 };
                 sender
-                    .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                    .send(Message::Text(serde_json::to_string(&msg).unwrap()))
                     .await
                     .map_err(|e| error::AppError::Internal(e.to_string()))?;
             }
@@ -1498,7 +1572,7 @@ async fn stream_response(
                     status: BlockStatus::Complete,
                 };
                 sender
-                    .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                    .send(Message::Text(serde_json::to_string(&msg).unwrap()))
                     .await
                     .map_err(|e| error::AppError::Internal(e.to_string()))?;
             }
@@ -1517,7 +1591,7 @@ async fn stream_response(
                     status: BlockStatus::Error,
                 };
                 sender
-                    .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+                    .send(Message::Text(serde_json::to_string(&msg).unwrap()))
                     .await
                     .map_err(|e| error::AppError::Internal(e.to_string()))?;
             }
@@ -1623,10 +1697,7 @@ pub enum ClientMessage {
     /// Decline delegated work
     DeclineWork { work_item_id: Uuid },
     /// Submit completed work (optionally for approval)
-    SubmitWork {
-        work_item_id: Uuid,
-        result: String,
-    },
+    SubmitWork { work_item_id: Uuid, result: String },
     /// Approve completed work
     ApproveWork {
         approval_id: Uuid,
@@ -1634,10 +1705,7 @@ pub enum ClientMessage {
         feedback: Option<String>,
     },
     /// Reject completed work
-    RejectWork {
-        approval_id: Uuid,
-        feedback: String,
-    },
+    RejectWork { approval_id: Uuid, feedback: String },
     /// Cancel delegated work (by delegator)
     CancelWork { work_item_id: Uuid },
     /// Claim unassigned work
@@ -1672,10 +1740,7 @@ pub enum ServerMessage {
     /// Block content delta (streaming)
     BlockContentDelta { block_id: Uuid, delta: String },
     /// Block status changed
-    BlockStatusChanged {
-        block_id: Uuid,
-        status: BlockStatus,
-    },
+    BlockStatusChanged { block_id: Uuid, status: BlockStatus },
     /// Block was forked
     BlockForked {
         original_block_id: Uuid,
@@ -1877,7 +1942,10 @@ mod tests {
     #[test]
     fn test_client_message_get_journal() {
         let journal_id = Uuid::new_v4();
-        let json = format!(r#"{{"type": "get_journal", "journal_id": "{}"}}"#, journal_id);
+        let json = format!(
+            r#"{{"type": "get_journal", "journal_id": "{}"}}"#,
+            journal_id
+        );
         let msg: ClientMessage = serde_json::from_str(&json).unwrap();
         match msg {
             ClientMessage::GetJournal { journal_id: jid } => {
@@ -2180,7 +2248,10 @@ mod tests {
     #[test]
     fn test_client_message_unsubscribe() {
         let journal_id = Uuid::new_v4();
-        let json = format!(r#"{{"type": "unsubscribe", "journal_id": "{}"}}"#, journal_id);
+        let json = format!(
+            r#"{{"type": "unsubscribe", "journal_id": "{}"}}"#,
+            journal_id
+        );
         let msg: ClientMessage = serde_json::from_str(&json).unwrap();
         match msg {
             ClientMessage::Unsubscribe { journal_id: jid } => {
@@ -2232,7 +2303,10 @@ mod tests {
     #[test]
     fn test_client_message_get_presence() {
         let journal_id = Uuid::new_v4();
-        let json = format!(r#"{{"type": "get_presence", "journal_id": "{}"}}"#, journal_id);
+        let json = format!(
+            r#"{{"type": "get_presence", "journal_id": "{}"}}"#,
+            journal_id
+        );
         let msg: ClientMessage = serde_json::from_str(&json).unwrap();
         match msg {
             ClientMessage::GetPresence { journal_id: jid } => {
@@ -2285,7 +2359,10 @@ mod tests {
     #[test]
     fn test_client_message_sync_request_no_sv() {
         let journal_id = Uuid::new_v4();
-        let json = format!(r#"{{"type": "sync_request", "journal_id": "{}"}}"#, journal_id);
+        let json = format!(
+            r#"{{"type": "sync_request", "journal_id": "{}"}}"#,
+            journal_id
+        );
         let msg: ClientMessage = serde_json::from_str(&json).unwrap();
         match msg {
             ClientMessage::SyncRequest { state_vector, .. } => {

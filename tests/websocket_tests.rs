@@ -266,7 +266,10 @@ async fn test_websocket_invalid_message() {
     if let Some(Ok(Message::Text(response))) = ws_stream.next().await {
         let json: serde_json::Value = serde_json::from_str(&response).unwrap();
         assert_eq!(json["type"], "error");
-        assert!(json["message"].as_str().unwrap().contains("Invalid message"));
+        assert!(json["message"]
+            .as_str()
+            .unwrap()
+            .contains("Invalid message"));
     } else {
         panic!("Expected text message");
     }
@@ -396,17 +399,14 @@ async fn test_websocket_submit_with_new_session() {
         .unwrap();
 
     // Get the journal_id from response with timeout
-    let journal_id = tokio::time::timeout(
-        tokio::time::Duration::from_secs(5),
-        async {
-            if let Some(Ok(Message::Text(response))) = ws_stream.next().await {
-                let json: serde_json::Value = serde_json::from_str(&response).unwrap();
-                Some(json["journal_id"].as_str().unwrap().to_string())
-            } else {
-                None
-            }
-        },
-    )
+    let journal_id = tokio::time::timeout(tokio::time::Duration::from_secs(5), async {
+        if let Some(Ok(Message::Text(response))) = ws_stream.next().await {
+            let json: serde_json::Value = serde_json::from_str(&response).unwrap();
+            Some(json["journal_id"].as_str().unwrap().to_string())
+        } else {
+            None
+        }
+    })
     .await
     .expect("Timeout waiting for journal creation")
     .expect("Expected journal_id");
@@ -465,17 +465,14 @@ async fn test_websocket_submit_create_session_fails() {
         .await
         .unwrap();
 
-    let journal_id = tokio::time::timeout(
-        tokio::time::Duration::from_secs(10),
-        async {
-            if let Some(Ok(Message::Text(response))) = ws_stream.next().await {
-                let json: serde_json::Value = serde_json::from_str(&response).unwrap();
-                Some(json["journal_id"].as_str().unwrap().to_string())
-            } else {
-                None
-            }
-        },
-    )
+    let journal_id = tokio::time::timeout(tokio::time::Duration::from_secs(10), async {
+        if let Some(Ok(Message::Text(response))) = ws_stream.next().await {
+            let json: serde_json::Value = serde_json::from_str(&response).unwrap();
+            Some(json["journal_id"].as_str().unwrap().to_string())
+        } else {
+            None
+        }
+    })
     .await
     .expect("Timeout")
     .expect("Expected journal_id");
@@ -587,11 +584,8 @@ async fn test_websocket_submit_full_flow() {
         let mut msgs = Vec::new();
         // Try to collect up to 10 messages
         for _ in 0..10 {
-            match tokio::time::timeout(
-                tokio::time::Duration::from_millis(500),
-                ws_stream.next(),
-            )
-            .await
+            match tokio::time::timeout(tokio::time::Duration::from_millis(500), ws_stream.next())
+                .await
             {
                 Ok(Some(Ok(Message::Text(response)))) => {
                     let json: serde_json::Value = serde_json::from_str(&response).unwrap();
@@ -606,10 +600,7 @@ async fn test_websocket_submit_full_flow() {
     .expect("Timeout collecting messages");
 
     // Verify we got various message types
-    let types: Vec<&str> = messages
-        .iter()
-        .filter_map(|m| m["type"].as_str())
-        .collect();
+    let types: Vec<&str> = messages.iter().filter_map(|m| m["type"].as_str()).collect();
     assert!(types.contains(&"block_created"), "Missing block_created");
 }
 
