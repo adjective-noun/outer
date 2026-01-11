@@ -234,7 +234,18 @@ export function initializeConnection(): Promise<void> {
 						break;
 					}
 				}
-				blocks.update((bs) => [...bs, message.block]);
+				// Position block after its parent if it has one, otherwise append
+				blocks.update((bs) => {
+					if (message.block.parent_id) {
+						const parentIdx = bs.findIndex(b => b.id === message.block.parent_id);
+						if (parentIdx >= 0) {
+							const newBlocks = [...bs];
+							newBlocks.splice(parentIdx + 1, 0, message.block);
+							return newBlocks;
+						}
+					}
+					return [...bs, message.block];
+				});
 				break;
 
 			case 'block_content_delta':
