@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/stores';
 	import { goto, invalidateAll } from '$app/navigation';
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount, onDestroy, tick } from 'svelte';
 	import {
 		loadJournal,
 		subscribeToJournal,
@@ -21,6 +21,7 @@
 	import BlockCard from './BlockCard.svelte';
 	import PresenceBar from './PresenceBar.svelte';
 	import ApprovalPanel from './ApprovalPanel.svelte';
+	import BlockGraph from './BlockGraph.svelte';
 
 	$: journalId = $page.params.id as string;
 
@@ -32,6 +33,8 @@
 	let currentJournalIdRef: string | null = null;
 	let userScrolledUp = false;
 	let previousBlockCount = 0;
+	let selectedBlockId: string | null = null;
+	let blockElements: Map<string, HTMLElement> = new Map();
 
 	onMount(() => {
 		// Try to get stored name
@@ -60,6 +63,26 @@
 		submitPrompt(journalId, promptInput.trim());
 		promptInput = '';
 		submitting = false;
+	}
+
+	async function handleSelectBlock(event: CustomEvent<string>) {
+		const blockId = event.detail;
+		selectedBlockId = blockId;
+
+		// Wait for any DOM updates
+		await tick();
+
+		// Find the block element and scroll to it
+		const blockElement = document.querySelector(`[data-block-id="${blockId}"]`);
+		if (blockElement && scrollContainer) {
+			blockElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+			// Add a brief highlight effect
+			blockElement.classList.add('highlight-flash');
+			setTimeout(() => {
+				blockElement.classList.remove('highlight-flash');
+			}, 1500);
+		}
 	}
 
 	// Track if user scrolled away from bottom
@@ -112,19 +135,27 @@
 
 	<PresenceBar participants={$participants} currentParticipant={$currentParticipant} />
 
-	<main class="content" bind:this={scrollContainer} on:scroll={handleScroll}>
-		<div class="blocks-container">
-			{#if $blocks.length === 0}
-				<div class="empty-state">
-					<p>Start a conversation by sending a message below.</p>
-				</div>
-			{:else}
-				{#each $blocks as block (block.id)}
-					<BlockCard {block} />
-				{/each}
-			{/if}
-		</div>
-	</main>
+	<div class="main-area">
+		<aside class="graph-sidebar">
+			<BlockGraph blocks={$blocks} {selectedBlockId} on:selectBlock={handleSelectBlock} />
+		</aside>
+
+		<main class="content" bind:this={scrollContainer} on:scroll={handleScroll}>
+			<div class="blocks-container">
+				{#if $blocks.length === 0}
+					<div class="empty-state">
+						<p>Start a conversation by sending a message below.</p>
+					</div>
+				{:else}
+					{#each $blocks as block (block.id)}
+						<div data-block-id={block.id} class="block-wrapper" class:selected={selectedBlockId === block.id}>
+							<BlockCard {block} />
+						</div>
+					{/each}
+				{/if}
+			</div>
+		</main>
+	</div>
 
 	{#if showApprovals && $approvalQueue.length > 0}
 		<ApprovalPanel
@@ -204,10 +235,46 @@
 		font-weight: 600;
 	}
 
+	.main-area {
+		flex: 1;
+		display: flex;
+		overflow: hidden;
+	}
+
+	.graph-sidebar {
+		width: 180px;
+		min-width: 180px;
+		flex-shrink: 0;
+		overflow: hidden;
+	}
+
 	.content {
 		flex: 1;
 		overflow-y: auto;
 		scroll-behavior: smooth;
+	}
+
+	.block-wrapper {
+		transition: transform 0.2s, box-shadow 0.2s;
+	}
+
+	.block-wrapper.selected {
+		transform: scale(1.01);
+		box-shadow: 0 0 0 2px var(--color-primary);
+		border-radius: var(--radius-md);
+	}
+
+	:global(.block-wrapper.highlight-flash) {
+		animation: flash 1.5s ease-out;
+	}
+
+	@keyframes flash {
+		0% {
+			box-shadow: 0 0 0 3px var(--color-primary);
+		}
+		100% {
+			box-shadow: none;
+		}
 	}
 
 	.blocks-container {
@@ -253,6 +320,13 @@
 		min-width: 80px;
 	}
 
+	@media (max-width: 768px) {
+		.graph-sidebar {
+			width: 120px;
+			min-width: 120px;
+		}
+	}
+
 	@media (max-width: 640px) {
 		.header {
 			padding: 10px 12px;
@@ -260,6 +334,10 @@
 
 		.header h1 {
 			font-size: 1rem;
+		}
+
+		.graph-sidebar {
+			display: none;
 		}
 
 		.blocks-container {
