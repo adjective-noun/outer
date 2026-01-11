@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/stores';
+	import { goto, invalidateAll } from '$app/navigation';
 	import { onMount, onDestroy } from 'svelte';
 	import {
 		loadJournal,
@@ -29,7 +30,8 @@
 	let showApprovals = false;
 	let userName = 'User';
 	let currentJournalIdRef: string | null = null;
-	let userIsNearBottom = true; // Track if user is near bottom for auto-scroll
+	let userScrolledUp = false;
+	let previousBlockCount = 0;
 
 	onMount(() => {
 		// Try to get stored name
@@ -60,23 +62,35 @@
 		submitting = false;
 	}
 
-	// Check if user is near bottom of scroll container (within 100px)
+	// Track if user scrolled away from bottom
 	function handleScroll() {
 		if (!scrollContainer) return;
-		const threshold = 100;
-		const distanceFromBottom = scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight;
-		userIsNearBottom = distanceFromBottom < threshold;
+		const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
+		// Consider "at bottom" if within 100px of the bottom
+		userScrolledUp = scrollHeight - scrollTop - clientHeight > 100;
 	}
 
-	// Auto-scroll on new blocks only if user is near bottom
-	$: if ($blocks.length > 0 && scrollContainer && userIsNearBottom) {
+	// Auto-scroll only on new blocks and only if user hasn't scrolled up
+	$: if ($blocks.length > previousBlockCount && scrollContainer && !userScrolledUp) {
+		previousBlockCount = $blocks.length;
 		requestAnimationFrame(() => {
 			scrollContainer.scrollTop = scrollContainer.scrollHeight;
 		});
+	} else if ($blocks.length !== previousBlockCount) {
+		previousBlockCount = $blocks.length;
 	}
 
 	// Count pending approvals
 	$: pendingApprovals = $approvalQueue.filter(a => a.status === 'pending').length;
+
+	// Navigate back to journals with proper cleanup
+	async function goToJournals() {
+		if (currentJournalIdRef) {
+			unsubscribeFromJournal(currentJournalIdRef);
+		}
+		await invalidateAll();
+		goto('/');
+	}
 </script>
 
 <svelte:head>
@@ -85,7 +99,7 @@
 
 <div class="journal-page">
 	<header class="header">
-		<a href="/" class="back">&larr; Journals</a>
+		<a href="/" class="back" on:click|preventDefault={goToJournals}>&larr; Journals</a>
 		<h1>{$currentJournal?.title ?? 'Loading...'}</h1>
 		<div class="header-actions">
 			{#if pendingApprovals > 0}

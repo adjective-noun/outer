@@ -9,10 +9,17 @@
 	$: isError = block.status === 'error';
 	$: isPending = block.status === 'pending';
 	$: isForked = !!block.forked_from_id;
+	$: isOptimistic = block.id.startsWith('pending-');
 
 	// Find author (for now, infer from block type)
 	$: author = isUser ? 'You' : 'Assistant';
 	$: authorKind = isUser ? 'user' : 'agent';
+
+	// Normalize whitespace: collapse multiple blank lines into one, trim trailing spaces
+	$: normalizedContent = block.content
+		.replace(/[ \t]+$/gm, '')           // Trim trailing spaces from each line
+		.replace(/\n{3,}/g, '\n\n')         // Collapse 3+ newlines to 2
+		.trim();                            // Trim start/end
 
 	function handleFork() {
 		forkBlock(block.id);
@@ -27,7 +34,7 @@
 	}
 </script>
 
-<article class="block-card" class:user={isUser} class:assistant={!isUser} class:streaming={isStreaming} class:error={isError} class:forked={isForked}>
+<article class="block-card" class:user={isUser} class:assistant={!isUser} class:streaming={isStreaming} class:error={isError} class:forked={isForked} class:optimistic={isOptimistic}>
 	<header class="block-header">
 		<div class="author" class:user={isUser} class:agent={!isUser}>
 			<span class="author-indicator" class:user={isUser} class:agent={!isUser}></span>
@@ -35,12 +42,15 @@
 			{#if isForked}
 				<span class="fork-badge">forked</span>
 			{/if}
+			{#if isOptimistic}
+				<span class="syncing-badge">syncing...</span>
+			{/if}
 		</div>
 		<time class="timestamp">{new Date(block.created_at).toLocaleTimeString()}</time>
 	</header>
 
 	<div class="block-content">
-		{#if isPending}
+		{#if isPending && !isOptimistic}
 			<div class="pending">
 				<span class="dot"></span>
 				<span class="dot"></span>
@@ -51,7 +61,7 @@
 				{block.content || 'An error occurred'}
 			</div>
 		{:else}
-			<div class="content-text">{block.content}</div>
+			<div class="content-text">{normalizedContent}</div>
 		{/if}
 
 		{#if isStreaming}
@@ -151,6 +161,30 @@
 		border-radius: 4px;
 		text-transform: uppercase;
 		font-weight: 600;
+	}
+
+	.syncing-badge {
+		font-size: 0.625rem;
+		padding: 2px 6px;
+		background: var(--color-text-muted);
+		color: var(--color-bg);
+		border-radius: 4px;
+		font-weight: 500;
+		animation: syncPulse 1.5s ease-in-out infinite;
+	}
+
+	@keyframes syncPulse {
+		0%, 100% {
+			opacity: 0.7;
+		}
+		50% {
+			opacity: 1;
+		}
+	}
+
+	.block-card.optimistic {
+		opacity: 0.85;
+		border-style: dashed;
 	}
 
 	.timestamp {

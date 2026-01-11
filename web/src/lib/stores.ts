@@ -32,6 +32,46 @@ export const availableParticipants = writable<Array<{ id: string; name: string; 
 // Session ID for OpenCode
 export const sessionId = writable<string | null>(null);
 
+// Pending messages for optimistic UI
+interface PendingMessage {
+	tempId: string;
+	journalId: string;
+	content: string;
+	timestamp: number;
+}
+export const pendingMessages = writable<PendingMessage[]>([]);
+
+// Local storage key for pending messages
+const PENDING_MESSAGES_KEY = 'outer_pending_messages';
+
+// Load pending messages from localStorage
+function loadPendingMessages(): PendingMessage[] {
+	try {
+		const stored = localStorage.getItem(PENDING_MESSAGES_KEY);
+		if (stored) {
+			return JSON.parse(stored);
+		}
+	} catch (e) {
+		console.error('Failed to load pending messages:', e);
+	}
+	return [];
+}
+
+// Save pending messages to localStorage
+function savePendingMessages(messages: PendingMessage[]) {
+	try {
+		localStorage.setItem(PENDING_MESSAGES_KEY, JSON.stringify(messages));
+	} catch (e) {
+		console.error('Failed to save pending messages:', e);
+	}
+}
+
+// Initialize pending messages from localStorage
+if (typeof window !== 'undefined') {
+	pendingMessages.set(loadPendingMessages());
+	pendingMessages.subscribe((msgs) => savePendingMessages(msgs));
+}
+
 // Initialize WebSocket and handlers
 export function initializeConnection(): Promise<void> {
 	const ws = getWebSocketClient();
@@ -42,6 +82,29 @@ export function initializeConnection(): Promise<void> {
 		error.set(null);
 		// Load journals on connect/reconnect
 		ws.send({ type: 'list_journals' });
+
+		// Resend pending messages on reconnect
+		const pending = get(pendingMessages);
+		const currentJournal = get(currentJournalId);
+		if (currentJournal && pending.length > 0) {
+			// Re-subscribe to the current journal
+			const storedName = typeof localStorage !== 'undefined'
+				? localStorage.getItem('outer_user_name') || 'User'
+				: 'User';
+			ws.send({ type: 'subscribe', journal_id: currentJournal, name: storedName, kind: 'user' });
+
+			// Resend any pending messages for this journal
+			const journalPending = pending.filter(p => p.journalId === currentJournal);
+			for (const msg of journalPending) {
+				const sid = get(sessionId);
+				ws.send({
+					type: 'submit',
+					journal_id: msg.journalId,
+					content: msg.content,
+					session_id: sid ?? undefined
+				});
+			}
+		}
 	});
 
 	ws.onDisconnect(() => {
@@ -84,6 +147,34 @@ export function initializeConnection(): Promise<void> {
 				break;
 
 			case 'block_created':
+				// Check if this is a user block that matches a pending message
+				if (message.block.block_type === 'user') {
+					const pending = get(pendingMessages);
+					const matchIdx = pending.findIndex(p =>
+						p.journalId === message.block.journal_id &&
+						p.content === message.block.content
+					);
+					if (matchIdx >= 0) {
+						// Remove the pending message
+						pendingMessages.update(ps => ps.filter((_, i) => i !== matchIdx));
+						// Replace optimistic block with real one
+						blocks.update((bs) => {
+							const optimisticIdx = bs.findIndex(b =>
+								b.id.startsWith('pending-') &&
+								b.content === message.block.content
+							);
+							if (optimisticIdx >= 0) {
+								// Replace optimistic with real
+								const newBlocks = [...bs];
+								newBlocks[optimisticIdx] = message.block;
+								return newBlocks;
+							}
+							// No optimistic block found, just add
+							return [...bs, message.block];
+						});
+						break;
+					}
+				}
 				blocks.update((bs) => [...bs, message.block]);
 				break;
 
@@ -243,6 +334,30 @@ export function unsubscribeFromJournal(journalId: string) {
 
 export function submitPrompt(journalId: string, content: string) {
 	const sid = get(sessionId);
+	const tempId = `pending-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+	// Add to pending messages for durability
+	const pendingMsg: PendingMessage = {
+		tempId,
+		journalId,
+		content,
+		timestamp: Date.now()
+	};
+	pendingMessages.update(ps => [...ps, pendingMsg]);
+
+	// Add optimistic block immediately
+	const optimisticBlock: Block = {
+		id: tempId,
+		journal_id: journalId,
+		block_type: 'user',
+		content,
+		status: 'pending',
+		created_at: new Date().toISOString(),
+		updated_at: new Date().toISOString()
+	};
+	blocks.update(bs => [...bs, optimisticBlock]);
+
+	// Send to server
 	getWebSocketClient().send({
 		type: 'submit',
 		journal_id: journalId,
