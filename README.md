@@ -1,162 +1,214 @@
-# outer
+# Outer
 
-A collaborative AI conversation interface server. Outer provides real-time WebSocket communication for managing conversation journals with streaming AI responses.
+A collaborative, multi-surface AI conversation platform where humans and agents are peers.
 
-## Prerequisites
+Outer wraps an OpenCode server to provide an infinite coding journal experience. Each prompt-response cycle is a "block" that can be forked and re-run. Multiple participants (human or AI) can attach to the same session with real-time CRDT-based sync.
 
-- Rust 1.70+ (with cargo)
-- SQLite 3.x
-- An OpenCode-compatible backend server
+## Key Features
 
-## Installation
+- **Infinite Journal**: Conversations persist as blocks in a scrollable timeline
+- **Fork & Re-run**: Branch from any point, re-execute prompts with different contexts
+- **Real-time Collaboration**: Multiple users see changes instantly via CRDT sync
+- **Symmetric Delegation**: Any participant can delegate work to any other (human or agent)
+- **Approval Workflows**: Request and grant approvals in any direction
+- **Multi-Surface**: Web UI, CLI with TUI, and programmatic WebSocket API
 
-Clone and build the project:
+## Architecture
 
-```bash
-cargo build --release
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      Outer Server (Rust)                        │
+├─────────────────────────────────────────────────────────────────┤
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐  │
+│  │   Journal    │  │  Delegation  │  │    CRDT Sync         │  │
+│  │   Store      │  │   Manager    │  │    (Yrs)             │  │
+│  └──────────────┘  └──────────────┘  └──────────────────────┘  │
+│           │               │                    │               │
+│           └───────────────┼────────────────────┘               │
+│                           ▼                                    │
+│  ┌─────────────────────────────────────────────────────────┐  │
+│  │                 OpenCode Bridge                          │  │
+│  │   HTTP client to OpenCode, SSE multiplexing              │  │
+│  └─────────────────────────────────────────────────────────┘  │
+└───────────────────────────┬────────────────────────────────────┘
+                            ▼
+              ┌─────────────────────────┐
+              │   OpenCode Server       │
+              │   (AI Backend)          │
+              └─────────────────────────┘
 ```
 
-The compiled binary will be at `target/release/outer`.
+## Quick Start
+
+```bash
+# 1. Build everything
+cargo build --release
+
+# 2. Start OpenCode backend (required)
+# See OpenCode documentation for setup
+
+# 3. Run the server
+OPENCODE_URL=http://localhost:8080 ./target/release/outer
+
+# 4. Connect via CLI
+./target/release/outer-cli connect ws://localhost:3000/ws
+
+# 5. Or open the web UI
+cd web && npm install && npm run dev
+# Open http://localhost:5173
+```
+
+See [GETTING_STARTED.md](GETTING_STARTED.md) for a complete walkthrough.
+
+## Project Structure
+
+```
+outer/
+├── src/                    # Server core
+│   ├── main.rs            # Entry point
+│   ├── websocket.rs       # WebSocket protocol handler
+│   ├── store.rs           # SQLite persistence
+│   ├── opencode.rs        # OpenCode backend client
+│   ├── models.rs          # Data models
+│   ├── crdt/              # Real-time sync (Yrs)
+│   │   ├── journal_doc.rs # CRDT document wrapper
+│   │   ├── participant.rs # Presence tracking
+│   │   └── room.rs        # Journal room manager
+│   └── delegation/        # Work delegation system
+│       ├── capability.rs  # Participant capabilities
+│       ├── participant.rs # Registered participants
+│       ├── work_item.rs   # Work items & approvals
+│       └── manager.rs     # Delegation orchestration
+├── cli/                   # CLI client with TUI
+│   └── src/
+│       ├── main.rs        # CLI entry point
+│       ├── client.rs      # WebSocket client
+│       ├── tui.rs         # Terminal UI (ratatui)
+│       └── messages.rs    # Message types
+├── web/                   # SvelteKit web interface
+│   └── src/
+│       ├── lib/           # Stores, types, WebSocket
+│       └── routes/        # Pages and components
+├── migrations/            # SQLite schema
+├── tests/                 # Integration tests
+└── docs/
+    └── plans/             # Design documentation
+```
 
 ## Configuration
 
-Outer uses environment variables for configuration:
-
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DATABASE_URL` | `sqlite:outer.db` | SQLite database connection string |
-| `OPENCODE_URL` | `http://localhost:8080` | URL of the OpenCode backend server |
-| `RUST_LOG` | `outer=debug,tower_http=debug` | Logging configuration |
+| `DATABASE_URL` | `sqlite:outer.db` | SQLite connection string |
+| `OPENCODE_URL` | `http://localhost:8080` | OpenCode backend URL |
+| `RUST_LOG` | `outer=debug` | Logging level |
+| `PORT` | `3000` | Server port |
 
-## Running the Server
+## Surfaces
 
-```bash
-# Development
-cargo run
+### Web UI
 
-# Production
-DATABASE_URL=sqlite:production.db OPENCODE_URL=http://opencode:8080 ./target/release/outer
-```
-
-The server listens on `0.0.0.0:3000` by default.
-
-### Health Check
+Rich visual interface with:
+- Infinite scroll journal view
+- Block cards with fork/rerun buttons
+- Real-time presence indicators
+- Approval panel for delegation workflows
+- Responsive mobile design
 
 ```bash
-curl http://localhost:3000/health
-# Returns: ok
+cd web
+npm install
+npm run dev
 ```
 
-## API Overview
+### CLI
 
-Outer exposes a WebSocket endpoint at `/ws` for real-time communication.
+Terminal interface with ratatui TUI:
+- Streaming response display
+- Journal navigation
+- Fork and rerun commands
+- Agent/headless mode for automation
 
-### WebSocket Protocol
+```bash
+# Interactive mode
+outer-cli connect ws://localhost:3000/ws
 
-Connect to `ws://localhost:3000/ws` and exchange JSON messages.
-
-#### Client Messages
-
-**Create Journal**
-```json
-{"type": "create_journal", "title": "My Conversation"}
+# Agent mode (no TUI)
+outer-cli agent --journal <uuid>
 ```
 
-**List Journals**
-```json
-{"type": "list_journals"}
+### WebSocket API
+
+Programmatic access for building integrations:
+
+```javascript
+const ws = new WebSocket('ws://localhost:3000/ws');
+
+ws.send(JSON.stringify({
+  type: 'submit',
+  journal_id: 'uuid',
+  content: 'Hello, AI!'
+}));
+
+ws.onmessage = (event) => {
+  const msg = JSON.parse(event.data);
+  if (msg.type === 'block_content_delta') {
+    process.stdout.write(msg.delta);
+  }
+};
 ```
 
-**Get Journal**
-```json
-{"type": "get_journal", "journal_id": "uuid-here"}
-```
+## Participant Model
 
-**Submit Message**
-```json
-{
-  "type": "submit",
-  "journal_id": "uuid-here",
-  "content": "Hello, AI!",
-  "session_id": "optional-opencode-session-id"
+Outer treats humans and agents as peers with capability-based permissions:
+
+```rust
+enum Capability {
+    Read,      // View journal content
+    Submit,    // Send prompts
+    Fork,      // Create branches
+    Delegate,  // Assign work to others
+    Approve,   // Approve/reject requests
+    Admin,     // Manage participants
 }
 ```
 
-#### Server Messages
+### Delegation Workflows
 
-**Journal Created**
+Any participant can delegate to any other:
+
 ```json
-{"type": "journal_created", "journal_id": "uuid", "title": "My Conversation"}
+// Human delegates to agent
+{"type": "delegate", "block_id": "...", "to": "agent-123", "note": "Implement auth"}
+
+// Agent requests approval from human
+{"type": "request_approval", "block_id": "...", "from": "user-456"}
+
+// Human approves
+{"type": "approve", "block_id": "..."}
 ```
 
-**Journals List**
-```json
-{"type": "journals", "journals": [...]}
-```
-
-**Journal with Blocks**
-```json
-{"type": "journal", "journal": {...}, "blocks": [...]}
-```
-
-**Block Created**
-```json
-{"type": "block_created", "block": {...}}
-```
-
-**Block Content Delta** (streaming)
-```json
-{"type": "block_content_delta", "block_id": "uuid", "delta": "text chunk"}
-```
-
-**Block Status Changed**
-```json
-{"type": "block_status_changed", "block_id": "uuid", "status": "streaming|complete|error"}
-```
-
-**Error**
-```json
-{"type": "error", "message": "description"}
-```
-
-### Data Model
-
-- **Journal**: A conversation container with title and timestamps
-- **Block**: A message within a journal (user or assistant type) with content and status
-
-Block statuses: `pending`, `streaming`, `complete`, `error`
-
-## Development Setup
+## Development
 
 ```bash
-# Install dependencies and run
-cargo run
-
 # Run tests
 cargo test
 
-# Check formatting
-cargo fmt --check
+# Check coverage
+cargo tarpaulin --out Stdout --ignore-tests
 
-# Run linter
+# Format code
+cargo fmt
+
+# Lint
 cargo clippy
 ```
 
-### Database Migrations
+### Code Standards
 
-Migrations run automatically on startup. Schema is defined in `migrations/20260110_init.sql`.
-
-### Project Structure
-
-```
-src/
-├── main.rs       # Server setup and routing
-├── error.rs      # Error types
-├── models.rs     # Data models (Journal, Block)
-├── opencode.rs   # OpenCode backend client
-├── store.rs      # SQLite database operations
-└── websocket.rs  # WebSocket handler and protocol
-```
+- **80%+ test coverage** required for new code
+- Tests must run against real OpenCode (not divergent mocks)
+- Mock servers are acceptable for unit tests but must be validated against real backend
 
 ## License
 
