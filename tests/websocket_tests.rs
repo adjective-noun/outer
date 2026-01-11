@@ -356,23 +356,30 @@ async fn test_websocket_submit_with_new_session() {
 
     // Mock create session
     Mock::given(method("POST"))
-        .and(path("/sessions"))
+        .and(path("/session"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "id": "sess_123",
-            "model": "claude-3",
-            "created_at": "2026-01-10T00:00:00Z"
+            "version": "1.0.0",
+            "projectID": "proj_456"
         })))
         .mount(&mock_server)
         .await;
 
-    // Mock send message
-    Mock::given(method("POST"))
-        .and(path("/sessions/sess_123/messages"))
+    // Mock event stream
+    Mock::given(method("GET"))
+        .and(path("/event"))
         .respond_with(
             ResponseTemplate::new(200)
-                .set_body_string("event: content\ndata: {\"text\": \"Hello!\"}\n\nevent: done\ndata: \n\n")
+                .set_body_string("data: {\"type\": \"message.part.updated\", \"properties\": {\"delta\": \"Hello!\", \"part\": {\"sessionID\": \"sess_123\"}}}\n\ndata: {\"type\": \"session.idle\", \"properties\": {\"sessionID\": \"sess_123\"}}\n\n")
                 .insert_header("content-type", "text/event-stream"),
         )
+        .mount(&mock_server)
+        .await;
+
+    // Mock prompt_async
+    Mock::given(method("POST"))
+        .and(path("/session/sess_123/prompt_async"))
+        .respond_with(ResponseTemplate::new(204))
         .mount(&mock_server)
         .await;
 
@@ -441,7 +448,7 @@ async fn test_websocket_submit_create_session_fails() {
 
     // Mock create session to fail
     Mock::given(method("POST"))
-        .and(path("/sessions"))
+        .and(path("/session"))
         .respond_with(ResponseTemplate::new(500).set_body_string("Internal Server Error"))
         .mount(&mock_server)
         .await;
@@ -511,25 +518,32 @@ async fn test_websocket_submit_full_flow() {
 
     // Mock create session
     Mock::given(method("POST"))
-        .and(path("/sessions"))
+        .and(path("/session"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "id": "sess_full",
-            "model": "claude-3",
-            "created_at": "2026-01-10T00:00:00Z"
+            "version": "1.0.0",
+            "projectID": "proj_456"
         })))
         .mount(&mock_server)
         .await;
 
-    // Mock send message with full flow: content, more content, done
-    Mock::given(method("POST"))
-        .and(path("/sessions/sess_full/messages"))
+    // Mock event stream with full flow: content, more content, done
+    Mock::given(method("GET"))
+        .and(path("/event"))
         .respond_with(
             ResponseTemplate::new(200)
                 .set_body_string(
-                    "event: content\ndata: {\"text\": \"Hello \"}\n\nevent: content\ndata: {\"text\": \"World\"}\n\nevent: done\ndata: \n\n",
+                    "data: {\"type\": \"message.part.updated\", \"properties\": {\"delta\": \"Hello \", \"part\": {\"sessionID\": \"sess_full\"}}}\n\ndata: {\"type\": \"message.part.updated\", \"properties\": {\"delta\": \"World\", \"part\": {\"sessionID\": \"sess_full\"}}}\n\ndata: {\"type\": \"session.idle\", \"properties\": {\"sessionID\": \"sess_full\"}}\n\n",
                 )
                 .insert_header("content-type", "text/event-stream"),
         )
+        .mount(&mock_server)
+        .await;
+
+    // Mock prompt_async
+    Mock::given(method("POST"))
+        .and(path("/session/sess_full/prompt_async"))
+        .respond_with(ResponseTemplate::new(204))
         .mount(&mock_server)
         .await;
 
@@ -605,23 +619,30 @@ async fn test_websocket_submit_with_unknown_event() {
 
     // Mock create session
     Mock::given(method("POST"))
-        .and(path("/sessions"))
+        .and(path("/session"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "id": "sess_unk",
-            "model": "claude-3",
-            "created_at": "2026-01-10T00:00:00Z"
+            "version": "1.0.0",
+            "projectID": "proj_456"
         })))
         .mount(&mock_server)
         .await;
 
-    // Mock send message with unknown event type (should be ignored)
-    Mock::given(method("POST"))
-        .and(path("/sessions/sess_unk/messages"))
+    // Mock event stream with unknown event type (should be handled as Unknown)
+    Mock::given(method("GET"))
+        .and(path("/event"))
         .respond_with(
             ResponseTemplate::new(200)
-                .set_body_string("event: unknown_type\ndata: some_data\n\nevent: done\ndata: \n\n")
+                .set_body_string("data: {\"type\": \"unknown_type\", \"properties\": {}}\n\ndata: {\"type\": \"session.idle\", \"properties\": {\"sessionID\": \"sess_unk\"}}\n\n")
                 .insert_header("content-type", "text/event-stream"),
         )
+        .mount(&mock_server)
+        .await;
+
+    // Mock prompt_async
+    Mock::given(method("POST"))
+        .and(path("/session/sess_unk/prompt_async"))
+        .respond_with(ResponseTemplate::new(204))
         .mount(&mock_server)
         .await;
 

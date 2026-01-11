@@ -1,87 +1,28 @@
 #!/bin/bash
 # Development startup script for Outer
-# Runs both the Rust server and the Vite dev server
+# Spawns tmux panes for the Rust server (with auto-reload) and Vite dev server
 
 set -e
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+PROJECT_ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
 
-echo -e "${GREEN}Starting Outer development environment...${NC}"
-
-# Check if cargo is available
-if ! command -v cargo &> /dev/null; then
-    echo -e "${RED}Error: cargo not found. Please install Rust.${NC}"
-    exit 1
+# Check for cargo-watch
+if ! command -v cargo-watch &> /dev/null; then
+    echo "Installing cargo-watch..."
+    cargo install cargo-watch
 fi
 
-# Check if npm is available
-if ! command -v npm &> /dev/null; then
-    echo -e "${RED}Error: npm not found. Please install Node.js.${NC}"
-    exit 1
+if [ -n "$TMUX" ]; then
+    # Already in tmux - split current pane vertically
+    tmux split-window -v -c "$PROJECT_ROOT/web" "npm run dev"
+    tmux select-pane -U
+    exec cargo watch -x run --workdir "$PROJECT_ROOT"
+else
+    # Not in tmux - create new session
+    SESSION="outer-dev"
+    tmux kill-session -t "$SESSION" 2>/dev/null || true
+    tmux new-session -d -s "$SESSION" -c "$PROJECT_ROOT" -n main "cargo watch -x run"
+    tmux split-window -v -t "$SESSION" -c "$PROJECT_ROOT/web" "npm run dev"
+    tmux select-pane -t "$SESSION" -U
+    tmux attach -t "$SESSION"
 fi
-
-# Get the script directory
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-PROJECT_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
-
-cd "$PROJECT_ROOT"
-
-# Build if needed
-if [ ! -f target/debug/outer ]; then
-    echo -e "${YELLOW}Building Outer server...${NC}"
-    cargo build
-fi
-
-# Install web dependencies if needed
-if [ ! -d web/node_modules ]; then
-    echo -e "${YELLOW}Installing web dependencies...${NC}"
-    (cd web && npm install)
-fi
-
-# Cleanup function
-cleanup() {
-    echo -e "\n${YELLOW}Shutting down...${NC}"
-    kill $SERVER_PID 2>/dev/null || true
-    kill $WEB_PID 2>/dev/null || true
-    exit 0
-}
-
-trap cleanup SIGINT SIGTERM
-
-# Start the Rust server in background
-echo -e "${GREEN}Starting Outer server on port 3000...${NC}"
-cargo run &
-SERVER_PID=$!
-
-# Wait for server to start
-echo -e "${YELLOW}Waiting for server to start...${NC}"
-sleep 2
-
-# Check if server started
-if ! kill -0 $SERVER_PID 2>/dev/null; then
-    echo -e "${RED}Server failed to start${NC}"
-    exit 1
-fi
-
-# Start the web dev server
-echo -e "${GREEN}Starting web dev server on port 5173...${NC}"
-(cd web && npm run dev) &
-WEB_PID=$!
-
-echo -e ""
-echo -e "${GREEN}==============================================${NC}"
-echo -e "${GREEN}Outer development environment running!${NC}"
-echo -e "${GREEN}==============================================${NC}"
-echo -e ""
-echo -e "  Server:  http://localhost:3000"
-echo -e "  Web UI:  http://localhost:5173"
-echo -e ""
-echo -e "Press Ctrl+C to stop both servers"
-echo -e ""
-
-# Wait for either process to exit
-wait

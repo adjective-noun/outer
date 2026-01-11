@@ -22,6 +22,39 @@ use crate::models::{BlockStatus, BlockType};
 use crate::opencode::{OpenCodeClient, SendMessageRequest, StreamEvent};
 use crate::AppState;
 
+/// Create a user-friendly error message from an error, keeping full details separate
+fn make_error_message(err: &error::AppError) -> ServerMessage {
+    let full_error = err.to_string();
+
+    // Extract user-friendly message based on error type
+    let friendly_message = if full_error.contains("Invalid JSON from OpenCode") {
+        "OpenCode returned an invalid response. Check the console for details.".to_string()
+    } else if full_error.contains("Failed to connect") || full_error.contains("Connection refused") {
+        "Cannot connect to OpenCode server".to_string()
+    } else if full_error.contains("Failed to create session") {
+        "Failed to create OpenCode session".to_string()
+    } else {
+        // For other errors, try to extract the first sentence or keep it short
+        if full_error.len() > 100 {
+            format!("{}...", &full_error[..100])
+        } else {
+            full_error.clone()
+        }
+    };
+
+    // Only include details if they differ from the friendly message
+    let details = if friendly_message != full_error {
+        Some(full_error)
+    } else {
+        None
+    };
+
+    ServerMessage::Error {
+        message: friendly_message,
+        details,
+    }
+}
+
 /// WebSocket handler
 pub async fn handler(
     ws: WebSocketUpgrade,
@@ -54,7 +87,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
 
     // Get OpenCode URL from environment
     let opencode_url =
-        std::env::var("OPENCODE_URL").unwrap_or_else(|_| "http://localhost:8080".to_string());
+        std::env::var("OPENCODE_URL").unwrap_or_else(|_| "http://localhost:4096".to_string());
     let opencode = OpenCodeClient::new(opencode_url);
 
     // Connection state
@@ -77,6 +110,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
             Err(e) => {
                 let error = ServerMessage::Error {
                     message: format!("Invalid message: {}", e),
+                    details: None,
                 };
                 let mut sender = sender.lock().await;
                 if let Err(e) = sender
@@ -107,9 +141,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                 )
                 .await
                 {
-                    let error = ServerMessage::Error {
-                        message: e.to_string(),
-                    };
+                    let error = make_error_message(&e);
                     if let Err(e) = sender_guard
                         .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
                         .await
@@ -136,6 +168,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     Err(e) => {
                         let error = ServerMessage::Error {
                             message: e.to_string(),
+                            details: None,
                         };
                         let mut sender = sender.lock().await;
                         if let Err(e) = sender
@@ -167,6 +200,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     Err(e) => {
                         let error = ServerMessage::Error {
                             message: e.to_string(),
+                            details: None,
                         };
                         let mut sender = sender.lock().await;
                         if let Err(e) = sender
@@ -192,6 +226,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                 Err(e) => {
                     let error = ServerMessage::Error {
                         message: e.to_string(),
+                        details: None,
                     };
                     let mut sender = sender.lock().await;
                     if let Err(e) = sender
@@ -210,9 +245,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                 if let Err(e) =
                     handle_fork(&mut sender_guard, &state, &opencode, block_id, session_id).await
                 {
-                    let error = ServerMessage::Error {
-                        message: e.to_string(),
-                    };
+                    let error = make_error_message(&e);
                     if let Err(e) = sender_guard
                         .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
                         .await
@@ -229,9 +262,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                 if let Err(e) =
                     handle_rerun(&mut sender_guard, &state, &opencode, block_id, session_id).await
                 {
-                    let error = ServerMessage::Error {
-                        message: e.to_string(),
-                    };
+                    let error = make_error_message(&e);
                     if let Err(e) = sender_guard
                         .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
                         .await
@@ -245,6 +276,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                 if let Err(e) = handle_cancel(&mut sender_guard, &state, block_id).await {
                     let error = ServerMessage::Error {
                         message: e.to_string(),
+                        details: None,
                     };
                     if let Err(e) = sender_guard
                         .send(Message::Text(serde_json::to_string(&error).unwrap().into()))
@@ -330,6 +362,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         Err(e) => {
                             let error = ServerMessage::Error {
                                 message: format!("Invalid base64 update: {}", e),
+                                details: None,
                             };
                             let mut sender = sender.lock().await;
                             let _ = sender
@@ -429,6 +462,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     None => {
                         let error = ServerMessage::Error {
                             message: "Not registered with delegation system".to_string(),
+                            details: None,
                         };
                         let mut sender = sender.lock().await;
                         let _ = sender
@@ -466,6 +500,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     Err(e) => {
                         let error = ServerMessage::Error {
                             message: e.to_string(),
+                            details: None,
                         };
                         let mut sender = sender.lock().await;
                         let _ = sender
@@ -485,6 +520,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     None => {
                         let error = ServerMessage::Error {
                             message: "Not registered with delegation system".to_string(),
+                            details: None,
                         };
                         let mut sender = sender.lock().await;
                         let _ = sender
@@ -508,6 +544,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     Err(e) => {
                         let error = ServerMessage::Error {
                             message: e.to_string(),
+                            details: None,
                         };
                         let mut sender = sender.lock().await;
                         let _ = sender
@@ -526,6 +563,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     None => {
                         let error = ServerMessage::Error {
                             message: "Not registered with delegation system".to_string(),
+                            details: None,
                         };
                         let mut sender = sender.lock().await;
                         let _ = sender
@@ -549,6 +587,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     Err(e) => {
                         let error = ServerMessage::Error {
                             message: e.to_string(),
+                            details: None,
                         };
                         let mut sender = sender.lock().await;
                         let _ = sender
@@ -567,6 +606,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     None => {
                         let error = ServerMessage::Error {
                             message: "Not registered with delegation system".to_string(),
+                            details: None,
                         };
                         let mut sender = sender.lock().await;
                         let _ = sender
@@ -606,6 +646,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     Err(e) => {
                         let error = ServerMessage::Error {
                             message: e.to_string(),
+                            details: None,
                         };
                         let mut sender = sender.lock().await;
                         let _ = sender
@@ -624,6 +665,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     None => {
                         let error = ServerMessage::Error {
                             message: "Not registered with delegation system".to_string(),
+                            details: None,
                         };
                         let mut sender = sender.lock().await;
                         let _ = sender
@@ -648,6 +690,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     Err(e) => {
                         let error = ServerMessage::Error {
                             message: e.to_string(),
+                            details: None,
                         };
                         let mut sender = sender.lock().await;
                         let _ = sender
@@ -666,6 +709,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     None => {
                         let error = ServerMessage::Error {
                             message: "Not registered with delegation system".to_string(),
+                            details: None,
                         };
                         let mut sender = sender.lock().await;
                         let _ = sender
@@ -690,6 +734,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     Err(e) => {
                         let error = ServerMessage::Error {
                             message: e.to_string(),
+                            details: None,
                         };
                         let mut sender = sender.lock().await;
                         let _ = sender
@@ -708,6 +753,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     None => {
                         let error = ServerMessage::Error {
                             message: "Not registered with delegation system".to_string(),
+                            details: None,
                         };
                         let mut sender = sender.lock().await;
                         let _ = sender
@@ -731,6 +777,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     Err(e) => {
                         let error = ServerMessage::Error {
                             message: e.to_string(),
+                            details: None,
                         };
                         let mut sender = sender.lock().await;
                         let _ = sender
@@ -749,6 +796,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     None => {
                         let error = ServerMessage::Error {
                             message: "Not registered with delegation system".to_string(),
+                            details: None,
                         };
                         let mut sender = sender.lock().await;
                         let _ = sender
@@ -772,6 +820,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     Err(e) => {
                         let error = ServerMessage::Error {
                             message: e.to_string(),
+                            details: None,
                         };
                         let mut sender = sender.lock().await;
                         let _ = sender
@@ -824,6 +873,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     None => {
                         let error = ServerMessage::Error {
                             message: "Not registered with delegation system".to_string(),
+                            details: None,
                         };
                         let mut sender = sender.lock().await;
                         let _ = sender
@@ -847,6 +897,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     Err(e) => {
                         let error = ServerMessage::Error {
                             message: e.to_string(),
+                            details: None,
                         };
                         let mut sender = sender.lock().await;
                         let _ = sender
@@ -1633,7 +1684,11 @@ pub enum ServerMessage {
     /// Block was cancelled
     BlockCancelled { block_id: Uuid },
     /// Error occurred
-    Error { message: String },
+    Error {
+        message: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        details: Option<String>,
+    },
     /// Successfully subscribed to a journal
     Subscribed {
         journal_id: Uuid,
@@ -1929,6 +1984,7 @@ mod tests {
     fn test_server_message_error() {
         let msg = ServerMessage::Error {
             message: "Something went wrong".to_string(),
+            details: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains("error"));
@@ -1939,6 +1995,7 @@ mod tests {
     fn test_server_message_debug() {
         let msg = ServerMessage::Error {
             message: "test".to_string(),
+            details: None,
         };
         let debug_str = format!("{:?}", msg);
         assert!(debug_str.contains("Error"));

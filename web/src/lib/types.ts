@@ -91,7 +91,7 @@ export type ServerMessage =
 	| { type: 'block_status_changed'; block_id: string; status: Block['status'] }
 	| { type: 'block_forked'; original_block_id: string; new_block: Block }
 	| { type: 'block_cancelled'; block_id: string }
-	| { type: 'error'; message: string }
+	| { type: 'error'; message: string; details?: string }
 	| { type: 'subscribed'; journal_id: string; participant: Participant; participants: Participant[] }
 	| { type: 'unsubscribed'; journal_id: string }
 	| { type: 'participant_joined'; journal_id: string; participant: Participant }

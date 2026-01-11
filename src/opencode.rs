@@ -22,14 +22,23 @@ impl OpenCodeClient {
     }
 
     /// Create a new session
-    pub async fn create_session(&self, request: CreateSessionRequest) -> Result<Session> {
+    pub async fn create_session(&self, _request: CreateSessionRequest) -> Result<Session> {
         let response = self
             .client
-            .post(format!("{}/sessions", self.base_url))
-            .json(&request)
+            .post(format!("{}/session", self.base_url))
+            .json(&serde_json::json!({}))
             .send()
             .await
-            .map_err(|e| AppError::OpenCode(e.to_string()))?;
+            .map_err(|e| {
+                if e.is_connect() {
+                    tracing::warn!(
+                        "Failed to connect to OpenCode server at {}: {}",
+                        self.base_url,
+                        e
+                    );
+                }
+                AppError::OpenCode(e.to_string())
+            })?;
 
         if !response.status().is_success() {
             let status = response.status();
@@ -40,10 +49,29 @@ impl OpenCodeClient {
             )));
         }
 
-        response
-            .json()
-            .await
-            .map_err(|e| AppError::OpenCode(e.to_string()))
+        let text = response.text().await.map_err(|e| {
+            AppError::OpenCode(format!("Failed to read response: {}", e))
+        })?;
+
+        serde_json::from_str(&text).map_err(|e| {
+            // Log the full response for debugging
+            tracing::error!(
+                "Failed to parse OpenCode response as JSON: {}. Full response:\n{}",
+                e,
+                text
+            );
+            // Send truncated preview to client
+            let preview = if text.len() > 200 {
+                format!("{}...", &text[..200])
+            } else {
+                text.clone()
+            };
+            AppError::OpenCode(format!(
+                "Invalid JSON from OpenCode: {}. Response: {}",
+                e,
+                preview
+            ))
+        })
     }
 
     /// Send a message and stream the response
@@ -52,25 +80,63 @@ impl OpenCodeClient {
         session_id: &str,
         request: SendMessageRequest,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamEvent>> + Send>>> {
-        let response = self
+        // First, subscribe to the event stream
+        let event_response = self
             .client
-            .post(format!("{}/sessions/{}/messages", self.base_url, session_id))
-            .json(&request)
+            .get(format!("{}/event", self.base_url))
             .send()
             .await
-            .map_err(|e| AppError::OpenCode(e.to_string()))?;
+            .map_err(|e| {
+                if e.is_connect() {
+                    tracing::warn!(
+                        "Failed to connect to OpenCode server at {}: {}",
+                        self.base_url,
+                        e
+                    );
+                }
+                AppError::OpenCode(e.to_string())
+            })?;
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
+        if !event_response.status().is_success() {
+            let status = event_response.status();
+            let text = event_response.text().await.unwrap_or_default();
+            return Err(AppError::OpenCode(format!(
+                "Failed to subscribe to events: {} - {}",
+                status, text
+            )));
+        }
+
+        // Send the prompt asynchronously
+        let prompt_body = PromptRequest {
+            parts: vec![TextPart {
+                r#type: "text".to_string(),
+                text: request.content,
+            }],
+        };
+
+        let prompt_response = self
+            .client
+            .post(format!("{}/session/{}/prompt_async", self.base_url, session_id))
+            .json(&prompt_body)
+            .send()
+            .await
+            .map_err(|e| {
+                AppError::OpenCode(format!("Failed to send prompt: {}", e))
+            })?;
+
+        // prompt_async returns 204 on success
+        if !prompt_response.status().is_success() {
+            let status = prompt_response.status();
+            let text = prompt_response.text().await.unwrap_or_default();
             return Err(AppError::OpenCode(format!(
                 "Failed to send message: {} - {}",
                 status, text
             )));
         }
 
-        // Parse SSE stream
-        let stream = parse_sse_stream(response);
+        // Parse SSE stream, filtering for our session
+        let session_id_owned = session_id.to_string();
+        let stream = parse_sse_stream(event_response, Some(session_id_owned));
         Ok(Box::pin(stream))
     }
 
@@ -81,10 +147,19 @@ impl OpenCodeClient {
     ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamEvent>> + Send>>> {
         let response = self
             .client
-            .get(format!("{}/sessions/{}/events", self.base_url, session_id))
+            .get(format!("{}/event", self.base_url))
             .send()
             .await
-            .map_err(|e| AppError::OpenCode(e.to_string()))?;
+            .map_err(|e| {
+                if e.is_connect() {
+                    tracing::warn!(
+                        "Failed to connect to OpenCode server at {}: {}",
+                        self.base_url,
+                        e
+                    );
+                }
+                AppError::OpenCode(e.to_string())
+            })?;
 
         if !response.status().is_success() {
             let status = response.status();
@@ -95,7 +170,8 @@ impl OpenCodeClient {
             )));
         }
 
-        let stream = parse_sse_stream(response);
+        let session_id_owned = session_id.to_string();
+        let stream = parse_sse_stream(response, Some(session_id_owned));
         Ok(Box::pin(stream))
     }
 }
@@ -103,6 +179,7 @@ impl OpenCodeClient {
 /// Parse SSE stream from response
 fn parse_sse_stream(
     response: reqwest::Response,
+    session_filter: Option<String>,
 ) -> impl Stream<Item = Result<StreamEvent>> + Send {
     use futures::StreamExt;
 
@@ -131,8 +208,9 @@ fn parse_sse_stream(
                 if line.is_empty() {
                     // Empty line signals end of event
                     if !data.is_empty() {
-                        match parse_event(&event_type, &data) {
-                            Ok(event) => yield Ok(event),
+                        match parse_event(&event_type, &data, session_filter.as_deref()) {
+                            Ok(Some(event)) => yield Ok(event),
+                            Ok(None) => {} // Event filtered out
                             Err(e) => yield Err(e),
                         }
                         event_type.clear();
@@ -151,25 +229,95 @@ fn parse_sse_stream(
     }
 }
 
-pub(crate) fn parse_event(event_type: &str, data: &str) -> Result<StreamEvent> {
-    match event_type {
-        "content" | "" => {
-            let content: ContentEvent = serde_json::from_str(data)
-                .map_err(|e| AppError::OpenCode(format!("Failed to parse content event: {}", e)))?;
-            Ok(StreamEvent::Content(content))
+/// Parse an OpenCode event into our StreamEvent type
+pub(crate) fn parse_event(event_type: &str, data: &str, session_filter: Option<&str>) -> Result<Option<StreamEvent>> {
+    // Parse the event JSON
+    let event: serde_json::Value = serde_json::from_str(data).map_err(|e| {
+        tracing::error!(
+            "Failed to parse event as JSON: {}. Full data:\n{}",
+            e,
+            data
+        );
+        AppError::OpenCode(format!("Failed to parse event: {}", e))
+    })?;
+
+    // Get the event type from the payload
+    let payload_type = event.get("type").and_then(|t| t.as_str()).unwrap_or(event_type);
+    let properties = event.get("properties");
+
+    // Filter by session ID if specified
+    if let Some(filter_session) = session_filter {
+        if let Some(props) = properties {
+            if let Some(session_id) = props.get("sessionID").and_then(|s| s.as_str()) {
+                if session_id != filter_session {
+                    return Ok(None); // Skip events for other sessions
+                }
+            }
+            // Also check for part.sessionID
+            if let Some(part) = props.get("part") {
+                if let Some(session_id) = part.get("sessionID").and_then(|s| s.as_str()) {
+                    if session_id != filter_session {
+                        return Ok(None);
+                    }
+                }
+            }
         }
-        "done" => Ok(StreamEvent::Done),
-        "error" => {
-            let error: ErrorEvent = serde_json::from_str(data)
-                .map_err(|e| AppError::OpenCode(format!("Failed to parse error event: {}", e)))?;
-            Ok(StreamEvent::Error(error))
+    }
+
+    match payload_type {
+        "message.part.updated" => {
+            if let Some(props) = properties {
+                // Check if there's a delta (streaming text)
+                if let Some(delta) = props.get("delta").and_then(|d| d.as_str()) {
+                    return Ok(Some(StreamEvent::Content(ContentEvent {
+                        text: delta.to_string(),
+                    })));
+                }
+                // Check for text content in the part itself
+                if let Some(part) = props.get("part") {
+                    if let Some(content) = part.get("content").and_then(|c| c.as_str()) {
+                        // Only emit if this looks like new content
+                        if !content.is_empty() {
+                            return Ok(Some(StreamEvent::Content(ContentEvent {
+                                text: content.to_string(),
+                            })));
+                        }
+                    }
+                }
+            }
+            Ok(None)
+        }
+        "session.idle" => {
+            Ok(Some(StreamEvent::Done))
+        }
+        "session.error" => {
+            if let Some(props) = properties {
+                let error_msg = if let Some(error) = props.get("error") {
+                    if let Some(msg) = error.get("message").and_then(|m| m.as_str()) {
+                        msg.to_string()
+                    } else {
+                        error.to_string()
+                    }
+                } else {
+                    "Unknown error".to_string()
+                };
+                Ok(Some(StreamEvent::Error(ErrorEvent {
+                    message: error_msg,
+                    code: None,
+                })))
+            } else {
+                Ok(Some(StreamEvent::Error(ErrorEvent {
+                    message: "Session error".to_string(),
+                    code: None,
+                })))
+            }
         }
         _ => {
-            // Unknown event type, return raw
-            Ok(StreamEvent::Unknown {
-                event_type: event_type.to_string(),
+            // Unknown/unhandled event type
+            Ok(Some(StreamEvent::Unknown {
+                event_type: payload_type.to_string(),
                 data: data.to_string(),
-            })
+            }))
         }
     }
 }
@@ -182,11 +330,25 @@ pub struct CreateSessionRequest {
     pub system_prompt: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+struct PromptRequest {
+    parts: Vec<TextPart>,
+}
+
+#[derive(Debug, Serialize)]
+struct TextPart {
+    r#type: String,
+    text: String,
+}
+
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct Session {
     pub id: String,
-    pub model: String,
-    pub created_at: String,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default, rename = "projectID")]
+    pub project_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -231,83 +393,53 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_event_content() {
-        let data = r#"{"text": "Hello, world!"}"#;
-        let event = parse_event("content", data).unwrap();
+    fn test_parse_event_message_part_with_delta() {
+        let data = r#"{"type": "message.part.updated", "properties": {"delta": "Hello!", "part": {"sessionID": "ses_123"}}}"#;
+        let event = parse_event("", data, Some("ses_123")).unwrap();
         match event {
-            StreamEvent::Content(content) => {
-                assert_eq!(content.text, "Hello, world!");
+            Some(StreamEvent::Content(content)) => {
+                assert_eq!(content.text, "Hello!");
             }
             _ => panic!("Expected Content event"),
         }
     }
 
     #[test]
-    fn test_parse_event_content_empty_type() {
-        let data = r#"{"text": "test"}"#;
-        let event = parse_event("", data).unwrap();
-        match event {
-            StreamEvent::Content(content) => {
-                assert_eq!(content.text, "test");
-            }
-            _ => panic!("Expected Content event"),
-        }
+    fn test_parse_event_session_idle() {
+        let data = r#"{"type": "session.idle", "properties": {"sessionID": "ses_123"}}"#;
+        let event = parse_event("", data, Some("ses_123")).unwrap();
+        assert!(matches!(event, Some(StreamEvent::Done)));
     }
 
     #[test]
-    fn test_parse_event_done() {
-        let event = parse_event("done", "").unwrap();
-        assert!(matches!(event, StreamEvent::Done));
-    }
-
-    #[test]
-    fn test_parse_event_error() {
-        let data = r#"{"message": "Something went wrong", "code": "ERR001"}"#;
-        let event = parse_event("error", data).unwrap();
+    fn test_parse_event_session_error() {
+        let data = r#"{"type": "session.error", "properties": {"sessionID": "ses_123", "error": {"message": "Rate limited"}}}"#;
+        let event = parse_event("", data, Some("ses_123")).unwrap();
         match event {
-            StreamEvent::Error(err) => {
-                assert_eq!(err.message, "Something went wrong");
-                assert_eq!(err.code, Some("ERR001".to_string()));
+            Some(StreamEvent::Error(err)) => {
+                assert_eq!(err.message, "Rate limited");
             }
             _ => panic!("Expected Error event"),
         }
     }
 
     #[test]
-    fn test_parse_event_error_no_code() {
-        let data = r#"{"message": "Error without code"}"#;
-        let event = parse_event("error", data).unwrap();
-        match event {
-            StreamEvent::Error(err) => {
-                assert_eq!(err.message, "Error without code");
-                assert_eq!(err.code, None);
-            }
-            _ => panic!("Expected Error event"),
-        }
+    fn test_parse_event_filters_other_sessions() {
+        let data = r#"{"type": "session.idle", "properties": {"sessionID": "ses_other"}}"#;
+        let event = parse_event("", data, Some("ses_123")).unwrap();
+        assert!(event.is_none());
     }
 
     #[test]
     fn test_parse_event_unknown() {
-        let event = parse_event("custom_event", "some data").unwrap();
+        let data = r#"{"type": "custom_event", "properties": {}}"#;
+        let event = parse_event("", data, None).unwrap();
         match event {
-            StreamEvent::Unknown { event_type, data } => {
+            Some(StreamEvent::Unknown { event_type, .. }) => {
                 assert_eq!(event_type, "custom_event");
-                assert_eq!(data, "some data");
             }
             _ => panic!("Expected Unknown event"),
         }
-    }
-
-    #[test]
-    fn test_parse_event_invalid_content_json() {
-        let result = parse_event("content", "not valid json");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_parse_event_invalid_error_json() {
-        let result = parse_event("error", "not valid json");
-        assert!(result.is_err());
     }
 
     #[test]
@@ -322,22 +454,20 @@ mod tests {
     }
 
     #[test]
-    fn test_create_session_request_optional_fields() {
-        let req = CreateSessionRequest {
-            model: None,
-            system_prompt: None,
-        };
-        let json = serde_json::to_string(&req).unwrap();
-        assert!(json.contains("null") || !json.contains("model\":\""));
+    fn test_session_deserialization() {
+        let json = r#"{"id": "ses_123", "version": "1.0", "projectID": "proj_456"}"#;
+        let session: Session = serde_json::from_str(json).unwrap();
+        assert_eq!(session.id, "ses_123");
+        assert_eq!(session.version, Some("1.0".to_string()));
+        assert_eq!(session.project_id, Some("proj_456".to_string()));
     }
 
     #[test]
-    fn test_session_deserialization() {
-        let json = r#"{"id": "sess_123", "model": "claude-3", "created_at": "2026-01-10T00:00:00Z"}"#;
+    fn test_session_deserialization_minimal() {
+        let json = r#"{"id": "ses_123"}"#;
         let session: Session = serde_json::from_str(json).unwrap();
-        assert_eq!(session.id, "sess_123");
-        assert_eq!(session.model, "claude-3");
-        assert_eq!(session.created_at, "2026-01-10T00:00:00Z");
+        assert_eq!(session.id, "ses_123");
+        assert_eq!(session.version, None);
     }
 
     #[test]

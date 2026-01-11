@@ -207,6 +207,13 @@ export function initializeConnection(): Promise<void> {
 				break;
 
 			case 'error':
+				// Log full error details to console for debugging
+				if (message.details) {
+					console.error('Server error details:', message.details);
+				} else {
+					console.error('Server error:', message.message);
+				}
+				// Show user-friendly message in toast
 				error.set(message.message);
 				setTimeout(() => error.set(null), 5000);
 				break;

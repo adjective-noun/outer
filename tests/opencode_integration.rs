@@ -10,11 +10,11 @@ async fn test_create_session_success() {
     let mock_server = MockServer::start().await;
 
     Mock::given(method("POST"))
-        .and(path("/sessions"))
+        .and(path("/session"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "id": "sess_123",
-            "model": "claude-3",
-            "created_at": "2026-01-10T00:00:00Z"
+            "id": "ses_123",
+            "version": "1.0.0",
+            "projectID": "proj_456"
         })))
         .mount(&mock_server)
         .await;
@@ -28,8 +28,7 @@ async fn test_create_session_success() {
         .await
         .unwrap();
 
-    assert_eq!(session.id, "sess_123");
-    assert_eq!(session.model, "claude-3");
+    assert_eq!(session.id, "ses_123");
 }
 
 #[tokio::test]
@@ -37,7 +36,7 @@ async fn test_create_session_error() {
     let mock_server = MockServer::start().await;
 
     Mock::given(method("POST"))
-        .and(path("/sessions"))
+        .and(path("/session"))
         .respond_with(ResponseTemplate::new(500).set_body_string("Internal Server Error"))
         .mount(&mock_server)
         .await;
@@ -59,20 +58,28 @@ async fn test_send_message_success() {
 
     let mock_server = MockServer::start().await;
 
-    Mock::given(method("POST"))
-        .and(path("/sessions/sess_123/messages"))
+    // Mock the event stream endpoint
+    Mock::given(method("GET"))
+        .and(path("/event"))
         .respond_with(
             ResponseTemplate::new(200)
-                .set_body_string("event: content\ndata: {\"text\": \"Hello\"}\n\n")
+                .set_body_string("data: {\"type\": \"message.part.updated\", \"properties\": {\"delta\": \"Hello\", \"part\": {\"sessionID\": \"ses_123\"}}}\n\n")
                 .insert_header("content-type", "text/event-stream"),
         )
+        .mount(&mock_server)
+        .await;
+
+    // Mock the prompt_async endpoint
+    Mock::given(method("POST"))
+        .and(path("/session/ses_123/prompt_async"))
+        .respond_with(ResponseTemplate::new(204))
         .mount(&mock_server)
         .await;
 
     let client = outer::opencode::OpenCodeClient::new(&mock_server.uri());
     let mut stream = client
         .send_message(
-            "sess_123",
+            "ses_123",
             outer::opencode::SendMessageRequest {
                 content: "Hi".to_string(),
             },
@@ -85,7 +92,7 @@ async fn test_send_message_success() {
         outer::opencode::StreamEvent::Content(content) => {
             assert_eq!(content.text, "Hello");
         }
-        _ => panic!("Expected Content event"),
+        _ => panic!("Expected Content event, got {:?}", first),
     }
 }
 
@@ -93,8 +100,20 @@ async fn test_send_message_success() {
 async fn test_send_message_error_response() {
     let mock_server = MockServer::start().await;
 
+    // Mock the event stream endpoint first (it's called before prompt)
+    Mock::given(method("GET"))
+        .and(path("/event"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("")
+                .insert_header("content-type", "text/event-stream"),
+        )
+        .mount(&mock_server)
+        .await;
+
+    // Mock the prompt_async endpoint with error
     Mock::given(method("POST"))
-        .and(path("/sessions/sess_123/messages"))
+        .and(path("/session/ses_123/prompt_async"))
         .respond_with(ResponseTemplate::new(400).set_body_string("Bad Request"))
         .mount(&mock_server)
         .await;
@@ -102,7 +121,7 @@ async fn test_send_message_error_response() {
     let client = outer::opencode::OpenCodeClient::new(&mock_server.uri());
     let result = client
         .send_message(
-            "sess_123",
+            "ses_123",
             outer::opencode::SendMessageRequest {
                 content: "Hi".to_string(),
             },
@@ -119,17 +138,17 @@ async fn test_subscribe_events_success() {
     let mock_server = MockServer::start().await;
 
     Mock::given(method("GET"))
-        .and(path("/sessions/sess_123/events"))
+        .and(path("/event"))
         .respond_with(
             ResponseTemplate::new(200)
-                .set_body_string("event: content\ndata: {\"text\": \"Event 1\"}\n\n")
+                .set_body_string("data: {\"type\": \"message.part.updated\", \"properties\": {\"delta\": \"Event 1\", \"part\": {\"sessionID\": \"ses_123\"}}}\n\n")
                 .insert_header("content-type", "text/event-stream"),
         )
         .mount(&mock_server)
         .await;
 
     let client = outer::opencode::OpenCodeClient::new(&mock_server.uri());
-    let mut stream = client.subscribe_events("sess_123").await.unwrap();
+    let mut stream = client.subscribe_events("ses_123").await.unwrap();
 
     let event = stream.next().await.unwrap().unwrap();
     match event {
@@ -145,13 +164,13 @@ async fn test_subscribe_events_error() {
     let mock_server = MockServer::start().await;
 
     Mock::given(method("GET"))
-        .and(path("/sessions/sess_123/events"))
+        .and(path("/event"))
         .respond_with(ResponseTemplate::new(401).set_body_string("Unauthorized"))
         .mount(&mock_server)
         .await;
 
     let client = outer::opencode::OpenCodeClient::new(&mock_server.uri());
-    let result = client.subscribe_events("sess_123").await;
+    let result = client.subscribe_events("ses_123").await;
 
     assert!(result.is_err());
 }
@@ -162,22 +181,28 @@ async fn test_stream_error_event() {
 
     let mock_server = MockServer::start().await;
 
-    Mock::given(method("POST"))
-        .and(path("/sessions/sess_123/messages"))
+    // Mock the event stream endpoint
+    Mock::given(method("GET"))
+        .and(path("/event"))
         .respond_with(
             ResponseTemplate::new(200)
-                .set_body_string(
-                    "event: error\ndata: {\"message\": \"Rate limited\", \"code\": \"429\"}\n\n",
-                )
+                .set_body_string("data: {\"type\": \"session.error\", \"properties\": {\"sessionID\": \"ses_123\", \"error\": {\"message\": \"Rate limited\"}}}\n\n")
                 .insert_header("content-type", "text/event-stream"),
         )
+        .mount(&mock_server)
+        .await;
+
+    // Mock the prompt_async endpoint
+    Mock::given(method("POST"))
+        .and(path("/session/ses_123/prompt_async"))
+        .respond_with(ResponseTemplate::new(204))
         .mount(&mock_server)
         .await;
 
     let client = outer::opencode::OpenCodeClient::new(&mock_server.uri());
     let mut stream = client
         .send_message(
-            "sess_123",
+            "ses_123",
             outer::opencode::SendMessageRequest {
                 content: "Hi".to_string(),
             },
@@ -189,10 +214,90 @@ async fn test_stream_error_event() {
     match event {
         outer::opencode::StreamEvent::Error(err) => {
             assert_eq!(err.message, "Rate limited");
-            assert_eq!(err.code, Some("429".to_string()));
         }
         _ => panic!("Expected Error event"),
     }
+}
+
+#[tokio::test]
+async fn test_stream_session_idle() {
+    use futures::StreamExt;
+
+    let mock_server = MockServer::start().await;
+
+    // Mock the event stream endpoint
+    Mock::given(method("GET"))
+        .and(path("/event"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("data: {\"type\": \"session.idle\", \"properties\": {\"sessionID\": \"ses_123\"}}\n\n")
+                .insert_header("content-type", "text/event-stream"),
+        )
+        .mount(&mock_server)
+        .await;
+
+    // Mock the prompt_async endpoint
+    Mock::given(method("POST"))
+        .and(path("/session/ses_123/prompt_async"))
+        .respond_with(ResponseTemplate::new(204))
+        .mount(&mock_server)
+        .await;
+
+    let client = outer::opencode::OpenCodeClient::new(&mock_server.uri());
+    let mut stream = client
+        .send_message(
+            "ses_123",
+            outer::opencode::SendMessageRequest {
+                content: "Hi".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+
+    let event = stream.next().await.unwrap().unwrap();
+    assert!(matches!(event, outer::opencode::StreamEvent::Done));
+}
+
+#[tokio::test]
+async fn test_stream_filters_other_sessions() {
+    use futures::StreamExt;
+
+    let mock_server = MockServer::start().await;
+
+    // Event for a different session should be filtered out
+    Mock::given(method("GET"))
+        .and(path("/event"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(
+                    "data: {\"type\": \"session.idle\", \"properties\": {\"sessionID\": \"ses_other\"}}\n\ndata: {\"type\": \"session.idle\", \"properties\": {\"sessionID\": \"ses_123\"}}\n\n"
+                )
+                .insert_header("content-type", "text/event-stream"),
+        )
+        .mount(&mock_server)
+        .await;
+
+    // Mock the prompt_async endpoint
+    Mock::given(method("POST"))
+        .and(path("/session/ses_123/prompt_async"))
+        .respond_with(ResponseTemplate::new(204))
+        .mount(&mock_server)
+        .await;
+
+    let client = outer::opencode::OpenCodeClient::new(&mock_server.uri());
+    let mut stream = client
+        .send_message(
+            "ses_123",
+            outer::opencode::SendMessageRequest {
+                content: "Hi".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+
+    // First event for ses_other should be filtered, we should get ses_123's event
+    let event = stream.next().await.unwrap().unwrap();
+    assert!(matches!(event, outer::opencode::StreamEvent::Done));
 }
 
 #[tokio::test]
@@ -201,20 +306,26 @@ async fn test_stream_unknown_event() {
 
     let mock_server = MockServer::start().await;
 
-    Mock::given(method("POST"))
-        .and(path("/sessions/sess_123/messages"))
+    Mock::given(method("GET"))
+        .and(path("/event"))
         .respond_with(
             ResponseTemplate::new(200)
-                .set_body_string("event: custom\ndata: custom_data\n\n")
+                .set_body_string("data: {\"type\": \"custom_event\", \"properties\": {}}\n\n")
                 .insert_header("content-type", "text/event-stream"),
         )
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/session/ses_123/prompt_async"))
+        .respond_with(ResponseTemplate::new(204))
         .mount(&mock_server)
         .await;
 
     let client = outer::opencode::OpenCodeClient::new(&mock_server.uri());
     let mut stream = client
         .send_message(
-            "sess_123",
+            "ses_123",
             outer::opencode::SendMessageRequest {
                 content: "Hi".to_string(),
             },
@@ -224,34 +335,41 @@ async fn test_stream_unknown_event() {
 
     let event = stream.next().await.unwrap().unwrap();
     match event {
-        outer::opencode::StreamEvent::Unknown { event_type, data } => {
-            assert_eq!(event_type, "custom");
-            assert_eq!(data, "custom_data");
+        outer::opencode::StreamEvent::Unknown { event_type, .. } => {
+            assert_eq!(event_type, "custom_event");
         }
         _ => panic!("Expected Unknown event"),
     }
 }
 
 #[tokio::test]
-async fn test_stream_multiline_data() {
+async fn test_stream_multiple_content_deltas() {
     use futures::StreamExt;
 
     let mock_server = MockServer::start().await;
 
-    Mock::given(method("POST"))
-        .and(path("/sessions/sess_123/messages"))
+    Mock::given(method("GET"))
+        .and(path("/event"))
         .respond_with(
             ResponseTemplate::new(200)
-                .set_body_string("event: content\ndata: {\"text\": \"Line 1\"}\n\nevent: content\ndata: {\"text\": \"Line 2\"}\n\n")
+                .set_body_string(
+                    "data: {\"type\": \"message.part.updated\", \"properties\": {\"delta\": \"Hello \", \"part\": {\"sessionID\": \"ses_123\"}}}\n\ndata: {\"type\": \"message.part.updated\", \"properties\": {\"delta\": \"World!\", \"part\": {\"sessionID\": \"ses_123\"}}}\n\n"
+                )
                 .insert_header("content-type", "text/event-stream"),
         )
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/session/ses_123/prompt_async"))
+        .respond_with(ResponseTemplate::new(204))
         .mount(&mock_server)
         .await;
 
     let client = outer::opencode::OpenCodeClient::new(&mock_server.uri());
     let mut stream = client
         .send_message(
-            "sess_123",
+            "ses_123",
             outer::opencode::SendMessageRequest {
                 content: "Hi".to_string(),
             },
@@ -262,7 +380,7 @@ async fn test_stream_multiline_data() {
     let first = stream.next().await.unwrap().unwrap();
     match first {
         outer::opencode::StreamEvent::Content(content) => {
-            assert_eq!(content.text, "Line 1");
+            assert_eq!(content.text, "Hello ");
         }
         _ => panic!("Expected Content event"),
     }
@@ -270,7 +388,7 @@ async fn test_stream_multiline_data() {
     let second = stream.next().await.unwrap().unwrap();
     match second {
         outer::opencode::StreamEvent::Content(content) => {
-            assert_eq!(content.text, "Line 2");
+            assert_eq!(content.text, "World!");
         }
         _ => panic!("Expected Content event"),
     }
