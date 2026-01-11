@@ -1,0 +1,10 @@
+{
+    "scripts": {
+        "claude": "claude",
+        "opencode": "opencode"
+    },
+    "devDependencies": {
+        "@anthropic-ai/claude-code": "^2.0.76",
+        "opencode-ai": "1.1.12"
+    }
+}

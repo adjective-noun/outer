@@ -42,6 +42,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 thiserror = "1"
 anyhow = "1"
 
+# CLI
+clap = { version = "4", features = ["derive", "env"] }
+reedline = "0.44"
+
 # Async utilities
 futures = "0.3"
 tokio-stream = { version = "0.1", features = ["io-util"] }

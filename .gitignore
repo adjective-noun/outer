@@ -27,3 +27,6 @@ web/build
 web/.env
 web/.env.*
 !web/.env.example
+
+node_modules/
+outer.db
