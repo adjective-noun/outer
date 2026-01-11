@@ -11,10 +11,25 @@ export class WebSocketClient {
 	private reconnectDelay = 1000;
 	private connected = false;
 	private messageQueue: ClientMessage[] = [];
+	private onConnectCallback?: () => void;
+	private onDisconnectCallback?: () => void;
+	private onErrorCallback?: (error: string) => void;
 
 	constructor(url?: string) {
 		// Default to same host, /ws path
 		this.url = url || `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws`;
+	}
+
+	onConnect(cb: () => void) {
+		this.onConnectCallback = cb;
+	}
+
+	onDisconnect(cb: () => void) {
+		this.onDisconnectCallback = cb;
+	}
+
+	onError(cb: (error: string) => void) {
+		this.onErrorCallback = cb;
 	}
 
 	connect(): Promise<void> {
@@ -25,6 +40,7 @@ export class WebSocketClient {
 				this.ws.onopen = () => {
 					this.connected = true;
 					this.reconnectAttempts = 0;
+					this.onConnectCallback?.();
 					// Flush queued messages
 					while (this.messageQueue.length > 0) {
 						const msg = this.messageQueue.shift();
@@ -35,11 +51,13 @@ export class WebSocketClient {
 
 				this.ws.onclose = () => {
 					this.connected = false;
+					this.onDisconnectCallback?.();
 					this.attemptReconnect();
 				};
 
 				this.ws.onerror = (event) => {
 					console.error('WebSocket error:', event);
+					this.onErrorCallback?.('WebSocket connection failed');
 					if (!this.connected) {
 						reject(new Error('WebSocket connection failed'));
 					}
@@ -62,6 +80,7 @@ export class WebSocketClient {
 	private attemptReconnect() {
 		if (this.reconnectAttempts >= this.maxReconnectAttempts) {
 			console.error('Max reconnection attempts reached');
+			this.onErrorCallback?.('Max reconnection attempts reached');
 			return;
 		}
 

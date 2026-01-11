@@ -36,6 +36,23 @@ export const sessionId = writable<string | null>(null);
 export function initializeConnection(): Promise<void> {
 	const ws = getWebSocketClient();
 
+	// Register connection state callbacks BEFORE connecting
+	ws.onConnect(() => {
+		connected.set(true);
+		error.set(null);
+		// Load journals on connect/reconnect
+		ws.send({ type: 'list_journals' });
+	});
+
+	ws.onDisconnect(() => {
+		connected.set(false);
+	});
+
+	ws.onError((err) => {
+		error.set(err);
+		setTimeout(() => error.set(null), 5000);
+	});
+
 	ws.subscribe((message: ServerMessage) => {
 		switch (message.type) {
 			case 'journals':
@@ -196,11 +213,7 @@ export function initializeConnection(): Promise<void> {
 		}
 	});
 
-	return ws.connect().then(() => {
-		connected.set(true);
-		// Load journals on connect
-		ws.send({ type: 'list_journals' });
-	});
+	return ws.connect();
 }
 
 // Actions

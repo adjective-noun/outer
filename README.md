@@ -47,16 +47,32 @@ cargo build --release
 # 2. Start OpenCode backend (required)
 # See OpenCode documentation for setup
 
-# 3. Run the server
+# 3. Run the Outer server (Terminal 1)
 OPENCODE_URL=http://localhost:8080 ./target/release/outer
+# Wait for "Server listening on 0.0.0.0:3000"
 
-# 4. Connect via CLI
+# 4a. Connect via CLI
 ./target/release/outer-cli connect ws://localhost:3000/ws
 
-# 5. Or open the web UI
+# 4b. OR use the Web UI (Terminal 2)
 cd web && npm install && npm run dev
-# Open http://localhost:5173
+# Open http://localhost:5173 in your browser
 ```
+
+**Important:** The Web UI requires the Outer server to be running. Start the server first, then the web dev server.
+
+Or use the dev script to start both at once:
+```bash
+./scripts/dev.sh
+```
+
+### Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| "Server Not Connected" overlay | Server not running | Run `cargo run` first |
+| Buttons disabled | WebSocket not connected | Check server is on port 3000 |
+| `ECONNREFUSED` in console | Server not running | Start server before web UI |
 
 See [GETTING_STARTED.md](GETTING_STARTED.md) for a complete walkthrough.
 
