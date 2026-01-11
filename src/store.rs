@@ -99,7 +99,11 @@ impl Store {
     ) -> Result<Block> {
         let id = Uuid::new_v4();
         let now = Utc::now();
-        let status = BlockStatus::Pending;
+        // User blocks are complete immediately; assistant blocks start pending
+        let status = match block_type {
+            BlockType::User => BlockStatus::Complete,
+            BlockType::Assistant => BlockStatus::Pending,
+        };
 
         sqlx::query(
             r#"
@@ -491,7 +495,8 @@ mod tests {
         assert_eq!(block.journal_id, journal.id);
         assert_eq!(block.block_type, BlockType::User);
         assert_eq!(block.content, "Hello");
-        assert_eq!(block.status, BlockStatus::Pending);
+        // User blocks are complete immediately
+        assert_eq!(block.status, BlockStatus::Complete);
     }
 
     #[tokio::test]
