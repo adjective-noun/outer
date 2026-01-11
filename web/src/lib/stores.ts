@@ -105,6 +105,11 @@ export function initializeConnection(): Promise<void> {
 				});
 			}
 		}
+
+		// Reload current journal blocks to fix any stale pending states
+		if (currentJournal) {
+			ws.send({ type: 'get_journal', journal_id: currentJournal });
+		}
 	});
 
 	ws.onDisconnect(() => {
