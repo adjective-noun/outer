@@ -17,6 +17,59 @@ export const currentJournal = derived(
 // Blocks for current journal
 export const blocks = writable<Block[]>([]);
 
+// Reorder blocks so forked blocks appear right after their original
+function reorderBlocksWithForks(blocks: Block[]): Block[] {
+	// Separate forked blocks from non-forked blocks
+	const forked: Block[] = [];
+	const nonForked: Block[] = [];
+
+	for (const block of blocks) {
+		if (block.forked_from_id) {
+			forked.push(block);
+		} else {
+			nonForked.push(block);
+		}
+	}
+
+	// If no forked blocks, return as-is
+	if (forked.length === 0) {
+		return blocks;
+	}
+
+	// Build result by inserting forked blocks after their originals
+	const result: Block[] = [];
+	const forkedByParent = new Map<string, Block[]>();
+
+	// Group forked blocks by their parent
+	for (const block of forked) {
+		const parentId = block.forked_from_id!;
+		if (!forkedByParent.has(parentId)) {
+			forkedByParent.set(parentId, []);
+		}
+		forkedByParent.get(parentId)!.push(block);
+	}
+
+	// Insert non-forked blocks, adding any forks after their parent
+	for (const block of nonForked) {
+		result.push(block);
+		const forks = forkedByParent.get(block.id);
+		if (forks) {
+			// Sort forks by created_at to maintain chronological order among siblings
+			forks.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+			result.push(...forks);
+		}
+	}
+
+	// Add any orphaned forks (parent not in current view) at the end
+	for (const [parentId, forks] of forkedByParent) {
+		if (!nonForked.some(b => b.id === parentId)) {
+			result.push(...forks);
+		}
+	}
+
+	return result;
+}
+
 // Participants in current journal
 export const participants = writable<Participant[]>([]);
 export const currentParticipant = writable<Participant | null>(null);
@@ -148,7 +201,8 @@ export function initializeConnection(): Promise<void> {
 					}
 					return [...js, message.journal];
 				});
-				blocks.set(message.blocks);
+				// Reorder so forked blocks appear after their originals
+				blocks.set(reorderBlocksWithForks(message.blocks));
 				break;
 
 			case 'block_created':
@@ -206,7 +260,18 @@ export function initializeConnection(): Promise<void> {
 				break;
 
 			case 'block_forked':
-				blocks.update((bs) => [...bs, message.new_block]);
+				blocks.update((bs) => {
+					// Find the original block that was forked
+					const originalIdx = bs.findIndex(b => b.id === message.original_block_id);
+					if (originalIdx >= 0) {
+						// Insert the forked block right after the original
+						const newBlocks = [...bs];
+						newBlocks.splice(originalIdx + 1, 0, message.new_block);
+						return newBlocks;
+					}
+					// Fallback: append to end if original not found
+					return [...bs, message.new_block];
+				});
 				break;
 
 			case 'block_cancelled':
