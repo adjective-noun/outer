@@ -288,12 +288,12 @@
 	}
 
 	.blocks-container {
-		max-width: 800px;
+		max-width: 900px;
 		margin: 0 auto;
-		padding: 16px;
+		padding: 16px 0;
 		display: flex;
 		flex-direction: column;
-		gap: 16px;
+		/* No gap - cells use border separation */
 	}
 
 	.empty-state {
@@ -351,8 +351,7 @@
 		}
 
 		.blocks-container {
-			padding: 12px;
-			gap: 12px;
+			padding: 12px 0;
 		}
 
 		.input-area {
