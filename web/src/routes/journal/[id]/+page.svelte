@@ -29,6 +29,7 @@
 	let showApprovals = false;
 	let userName = 'User';
 	let currentJournalIdRef: string | null = null;
+	let userIsNearBottom = true; // Track if user is near bottom for auto-scroll
 
 	onMount(() => {
 		// Try to get stored name
@@ -59,8 +60,16 @@
 		submitting = false;
 	}
 
-	// Auto-scroll on new blocks
-	$: if ($blocks.length > 0 && scrollContainer) {
+	// Check if user is near bottom of scroll container (within 100px)
+	function handleScroll() {
+		if (!scrollContainer) return;
+		const threshold = 100;
+		const distanceFromBottom = scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight;
+		userIsNearBottom = distanceFromBottom < threshold;
+	}
+
+	// Auto-scroll on new blocks only if user is near bottom
+	$: if ($blocks.length > 0 && scrollContainer && userIsNearBottom) {
 		requestAnimationFrame(() => {
 			scrollContainer.scrollTop = scrollContainer.scrollHeight;
 		});
@@ -89,7 +98,7 @@
 
 	<PresenceBar participants={$participants} currentParticipant={$currentParticipant} />
 
-	<main class="content" bind:this={scrollContainer}>
+	<main class="content" bind:this={scrollContainer} on:scroll={handleScroll}>
 		<div class="blocks-container">
 			{#if $blocks.length === 0}
 				<div class="empty-state">
